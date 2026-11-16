@@ -22,7 +22,7 @@
   function mount(root, options) {
     const api = options.api;
     const forced = options.target || "";
-    let entries = [], sources = [], batch = "", busy = false, submitting = false, last = "", config = {};
+    let entries = [], sources = [], batch = "", busy = false, submitting = false, last = "", config = {}, restored = false;
     let inspectionQueue = Promise.resolve();
     let revision = 0, polling = false, wasAdobe = false;
     const $ = id => root.querySelector('[data-c="' + id + '"]');
@@ -45,7 +45,7 @@
       <label data-c="compatRow" class="c-muted"><input data-c="compat" type="checkbox"> Preparar vídeo em H.264 quando necessário</label>
       <div data-c="message" role="status" aria-live="polite" class="c-message"></div>
       <button type="button" class="c-go" data-c="go" disabled>Adicione os links para continuar</button>
-      <div class="c-run-head"><b>Andamento</b><button type="button" class="c-link" data-c="cancel" hidden>Cancelar lista</button></div><div data-c="progress" class="c-progress"></div>`;
+      <div class="c-run-head"><b>Andamento</b><span><button type="button" class="c-link" data-c="clearP" hidden>Limpar</button> <button type="button" class="c-link" data-c="cancel" hidden>Cancelar lista</button></span></div><div data-c="progress" class="c-progress"></div>`;
     let media = options.media === "audio" ? "audio" : "video", customDir = "";
     let compact = !!forced && options.viewMode !== "full";
     function viewMode(value, save) {
@@ -149,12 +149,17 @@
         message(r.data && r.data.error || "Sem conexão com o app local. Tentando novamente…",true); return;
       }
       $("cancel").hidden = !!r.data.finished;
+      $("clearP").hidden = !(r.data.items || []).length;
       $("progress").innerHTML = (r.data.items || []).map(it => {
         const state = it.status === "pending" ? "Aguardando vaga na fila" : it.status === "queued" ? "Na fila" : it.status === "canceled" ? "Cancelado" : it.status === "error" ? it.error || "Falha no download" : it.status === "done" ? it.import_error ? "Baixado, mas não importou: "+it.import_error : it.import_app ? it.imported ? "Importado no projeto" : "Baixado · aguardando importação no editor" : "Concluído" : it.progress || "Baixando…";
         return '<div class="c-result '+(it.status === "error" || it.import_error ? 'c-error' : '')+'"><b>'+esc(it.title || it.url)+'</b><span>'+esc(state)+'</span></div>';
       }).join("");
       summary();
-      if (r.data.finished && !(r.data.items || []).some(it=>it.status==="done" && it.import_app && !it.imported)) batch="";
+      if (r.data.finished && !(r.data.items || []).some(it=>it.status==="done" && it.import_app && !it.imported)) {
+        if (restored) { $("progress").innerHTML=""; $("clearP").hidden=true; }   // lote antigo já terminado: não reexibir
+        batch=""; if(options.saveBatch)options.saveBatch("");       // lista terminada não volta na próxima abertura
+      }
+      restored = false;
       } finally { polling = false; }
     }
     $("links").addEventListener("paste", event => { const text = event.clipboardData && event.clipboardData.getData("text"); if (text && extractLinks(text).length) { event.preventDefault(); add(text); } });
@@ -175,13 +180,14 @@
       const selected=entries.filter(it=>it.selected&&it.available!==false);if(!selected.length||busy||submitting)return;
       if(target()==="custom"&&!customDir){message("Escolha a pasta de destino.",true);return;}
       submitting=true;summary();
-      try {const r=await api("POST","/batch",{items:selected.map(it=>({url:it.url,title:it.title,fallbackStream:it.fallbackStream,referer:it.referer})),quality:media==="audio"?"audio":$("format").value,audio_format:media==="audio"?$("format").value:"m4a",target:/^(premiere|aftereffects)$/.test(target())?target():"",outDir:target()==="custom"?customDir:"",compat:$("compat").checked});
+      try {const r=await api("POST","/batch",{items:selected.map(it=>({url:it.url,title:it.title,fallbackStream:it.fallbackStream,referer:it.referer,linkedinManifest:it.linkedinManifest})),quality:media==="audio"?"audio":$("format").value,audio_format:media==="audio"?$("format").value:"m4a",target:/^(premiere|aftereffects)$/.test(target())?target():"",outDir:target()==="custom"?customDir:"",compat:$("compat").checked});
         if(!r.ok)throw new Error(r.data&&r.data.error||"Não consegui iniciar. Confira se o app local está atualizado.");
         batch=r.data.batch_id;last=batch;if(options.saveBatch)options.saveBatch(batch);message("Lista enviada. Você pode fechar esta janela; o app local continua os downloads.");await poll();
       } catch(error){message(error.message,true);} finally{submitting=false;summary();}
     });
     $("cancel").addEventListener("click",async()=>{await api("POST","/batch/cancel",{id:batch});poll();});
-    if(options.batchId){batch=options.batchId;poll();}
+    $("clearP").addEventListener("click",()=>{batch="";if(options.saveBatch)options.saveBatch("");$("progress").innerHTML="";$("cancel").hidden=true;$("clearP").hidden=true;summary();});
+    if(options.batchId){batch=options.batchId;restored=true;poll();}
     if(options.items){entries=options.items.map(it=>Object.assign({available:true,selected:true},it));render();}
     if(options.url)add(options.url);
     api("GET","/config").then(r=>{if(!r.ok){message(r.data&&r.data.error||"O app local não respondeu. Confira se está atualizado e em execução.",true);return;}config=r.data||{};$("compat").checked=config.compat_h264===true;destination();});

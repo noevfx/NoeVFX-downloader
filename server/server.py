@@ -36,15 +36,18 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import uuid
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen as url_open
+from urllib.request import build_opener, HTTPRedirectHandler
 
-VERSION = "3.2.1"
+VERSION = "3.2.2"
 API_VERSION = 2                      # sobe quando o protocolo extensão <-> servidor muda
 AUDIO_FORMATS = {"mp3", "m4a", "wav", "flac", "opus"}
 ADOBE_AUDIO_FORMATS = {"mp3", "m4a", "wav"}
@@ -217,7 +220,7 @@ if not CONFIG_FILE.exists() and not _parent_writable(CONFIG_FILE):
     CONFIG_FILE = Path.home() / ".noevfx-downloader" / "config.json"
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-CFG_LOCK = threading.Lock()
+CFG_LOCK = threading.RLock()                     # reentrante: save_cfg segura e chama load_cfg sem deadlock
 
 
 def load_cfg() -> dict:
@@ -266,21 +269,21 @@ def clean_patch(patch: dict) -> dict:
 
 
 def save_cfg(patch: dict) -> dict:
-    cfg = load_cfg()
-    cfg.update(clean_patch(patch))
+    with CFG_LOCK:                                    # load→update→write juntos: duas gravações não se atropelam
+        cfg = load_cfg()
+        cfg.update(clean_patch(patch))
 
-    out = Path(str(cfg.get("output_dir") or DEFAULT_CFG["output_dir"])).expanduser()
-    try:
-        out.mkdir(parents=True, exist_ok=True)
-    except Exception as exc:
-        raise RuntimeError("Não consegui criar a pasta: %s" % exc)
-    cfg["output_dir"] = str(out)
+        out = Path(str(cfg.get("output_dir") or DEFAULT_CFG["output_dir"])).expanduser()
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            raise RuntimeError("Não consegui criar a pasta: %s" % exc)
+        cfg["output_dir"] = str(out)
 
-    with CFG_LOCK:
         tmp = CONFIG_FILE.with_name(CONFIG_FILE.name + ".tmp")
         tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(str(tmp), str(CONFIG_FILE))
-    return cfg
+        return cfg
 
 
 _IDS_CACHE = {"at": 0.0, "ids": set()}
@@ -509,18 +512,13 @@ def sweep_temp():
     """Apaga sobras de cookies/seletor de execuções que caíram no meio."""
     cutoff = time.time() - 60
     try:
-        for p in TMP.glob("nvf_ck_*"):
-            try:
-                if p.stat().st_mtime < cutoff:
-                    p.unlink()
-            except Exception:
-                pass
-        for p in TMP.glob("nvf_pick_*"):
-            try:
-                if p.stat().st_mtime < cutoff:
-                    p.unlink()
-            except Exception:
-                pass
+        for pat in ("nvf_ck_*", "nvf_pick_*", "nvf_li_*", "nvf_list_*", "nvf_painel_*", "nvf_upd_*"):
+            for p in TMP.glob(pat):
+                try:
+                    if p.stat().st_mtime < cutoff:
+                        p.unlink()
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -534,7 +532,7 @@ CANCELED = set()
 JOBS_LOCK = threading.Lock()
 MAX_CONCURRENT = 3
 EXECUTOR = ThreadPoolExecutor(max_workers=MAX_CONCURRENT)
-ACTIVE = ("queued", "downloading", "merging")
+ACTIVE = ("queued", "downloading", "merging", "stopping")
 
 
 class QueueFull(Exception):
@@ -786,15 +784,19 @@ def _compat_one(job_id: str, p: Path, n: int, total: int, st: dict) -> Path:
                                     creationflags=NO_WINDOW, start_new_session=not IS_WIN)
             with JOBS_LOCK:
                 PROCS[job_id] = proc
-            for line in proc.stdout:
-                if _is_canceled(job_id):
-                    kill_proc(proc)
-                    break
-                m = re.match(r"out_time_(?:us|ms)=(\d+)", line)
-                if m and info[2] > 0:
-                    pct = min(99, int(int(m.group(1)) / 1e6 / info[2] * 100))
-                    job_update(job_id, progress="%s %d%%" % (label, pct))
-            proc.wait(timeout=60)
+            try:
+                for line in proc.stdout:
+                    if _is_canceled(job_id):
+                        kill_proc(proc)
+                        break
+                    m = re.match(r"out_time_(?:us|ms)=(\d+)", line)
+                    if m and info[2] > 0:
+                        pct = min(99, int(int(m.group(1)) / 1e6 / info[2] * 100))
+                        job_update(job_id, progress="%s %d%%" % (label, pct))
+                proc.wait(timeout=60)
+            finally:
+                with JOBS_LOCK:
+                    PROCS.pop(job_id, None)
             if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0 and not _is_canceled(job_id):
                 final = p.with_suffix(".mp4")
                 if final != p:
@@ -803,10 +805,12 @@ def _compat_one(job_id: str, p: Path, n: int, total: int, st: dict) -> Path:
                 return final
         except Exception:
             pass
-        try:
-            tmp.unlink()
-        except Exception:
-            pass
+        for _try in range(3):                   # o ffmpeg morto pode segurar o arquivo por um instante (Windows)
+            try:
+                tmp.unlink()
+                break
+            except OSError:
+                time.sleep(0.4)
         if _is_canceled(job_id):
             break
     return p                                                # não deu para converter: fica o original (melhor que perder o vídeo)
@@ -1107,6 +1111,14 @@ def job_update(job_id: str, **kw):
                 lst = job.setdefault("all_files", [])
                 if f not in lst:
                     lst.append(f)
+            # status final/"stopping" nunca volta pra transitório: o loop de leitura pode
+            # processar uma linha bufferizada e regredir — o usuário veria "downloading" depois do Parar
+            if job.get("status") in ("stopping", "canceled", "done", "error", "failed") \
+                    and kw.get("status") in ("downloading", "merging", "queued"):
+                kw = dict(kw); kw.pop("status")
+            elif job.get("status") in ("canceled", "done", "error", "failed") \
+                    and kw.get("status") == "stopping":
+                kw = dict(kw); kw.pop("status")          # cancel tardio não sobrescreve o fim do job
             job.update(kw)
 
 
@@ -1173,6 +1185,148 @@ PIN_RE = re.compile(r"^https?://(?:[\w-]+\.)?pinterest\.[a-z.]+/pin/(\d{6,})", r
 def _safe_name(t, n: int = 100) -> str:
     t = re.sub(r'[<>:"/\\|?*%\x00-\x1f]', " ", str(t or ""))
     return re.sub(r"\s+", " ", t).strip(" .")[:n]
+
+
+def safe_filename(name: str) -> str:
+    """Nome seguro para apps/SO: translitera acentos (Maceió→Maceio), remove emoji e símbolos,
+    mantém letras/números/espaço e ()[]_-.. Compatível com Premiere/AE e compartilhamento."""
+    stem, sep, ext = str(name or "").rpartition(".")
+    if not sep or not re.fullmatch(r"[A-Za-z0-9]{1,8}", ext or ""):
+        stem, ext = str(name or ""), ""                      # ". algo" não é extensão: limpa junto com o nome
+    s = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
+    s = re.sub(r"[^A-Za-z0-9 .\[\]\(\)_-]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip(" .")
+    return (s or "video") + ("." + ext if ext else "")
+
+
+def _remux_to_mp4(ts_path: Path):
+    """MPEG-TS resgatado → .mp4 (-c copy, sem re-encode): formato que todo app reconhece."""
+    try:
+        ff = exe_path("ffmpeg")
+        if not ff:
+            return None
+        dst = ts_path.with_suffix(".mp4")
+        for n in range(2, 20):                                       # destino ocupado: não sobrescreve
+            if not dst.exists():
+                break
+            dst = ts_path.with_name("%s (%d).mp4" % (ts_path.stem, n))
+        if dst.exists():
+            return None                                              # esgotou (2)-(19): não sobrescreve arquivo do usuário
+        r = subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-y",
+                            "-i", str(ts_path), "-c", "copy", str(dst)],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=600, creationflags=NO_WINDOW)
+        if r.returncode == 0 and dst.exists() and dst.stat().st_size > 0:
+            try:
+                ts_path.unlink()
+            except OSError:
+                pass
+            return dst
+        try:
+            dst.unlink(missing_ok=True)
+        except OSError:
+            pass
+    except Exception:
+        pass
+    return None
+
+
+def _rescue_partials(out_dir, since: float, ts_only: bool = False, markers=None, job_id: str = ""):
+    """Download parado pelo usuário: o .part já gravado vira arquivo final
+    (MPEG-TS é remuxado para .mp4 — o TS bruto parece "travado" nos players comuns).
+    ts_only=True (job não-live ou live marcada pela sonda): só resgata se o conteúdo for
+    MPEG-TS — um .part de MP4 fragmentado não é reproduzível.
+    markers = id/destinos do vídeo: só toca .part DESTE job. Sem marcadores, só os nomes
+    que este job anunciou (all_files) — varrer por data roubaria .part de outro job.
+    E nunca toca arquivo que case marcador de OUTRO job ativo (cancelar+rebaixar o mesmo
+    vídeo criava dois jobs com o mesmo [id] no nome).
+    Devolve os caminhos resgatados (o mais novo por último)."""
+    marks = [m for m in (markers or []) if m]
+    with JOBS_LOCK:
+        job = JOBS.get(job_id) or {}
+        own_files = {Path(str(f)).name for f in (job.get("all_files") or [])}
+        other_marks = set()
+        for jid, j in JOBS.items():
+            if jid != job_id and j.get("status") in ACTIVE:
+                other_marks.update(_job_markers(j))
+    out = []
+    try:
+        for p in Path(out_dir).iterdir():
+            if p.suffix != ".part" or not p.is_file():
+                continue
+            name = p.name[:-5]                                     # tira só o ".part"
+            if marks and not any(m in p.name for m in marks):
+                continue
+            if not marks and name not in own_files:
+                continue                                           # sem identidade: só o que este job anunciou
+            if name not in own_files and any(m in p.name for m in other_marks):
+                continue                                           # casa marcador de outro job ativo e não é nosso
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            if st.st_mtime < since or st.st_size <= 0:
+                continue
+            try:
+                with p.open("rb") as fh:
+                    head = fh.read(8)                              # não p.read_bytes: .part de live pode ter GBs
+            except OSError:
+                head = b""
+            if head[:1] == b"\x47":                                # MPEG-TS: primeiro byte é o sync 0x47
+                name = str(Path(name).with_suffix(".ts"))
+            elif ts_only:
+                if marks or own_files:                             # .part deste job que não é TS: lixo, some da pasta
+                    try:
+                        p.unlink()
+                    except OSError:
+                        pass
+                continue                                           # VOD cancelado: pedaço de MP4 não é reproduzível
+            dst = p.with_name(safe_filename(name))
+            for n in range(2, 20):                                 # mesmo vídeo baixado antes: não sobrescreve
+                if not dst.exists():
+                    break
+                dst = p.with_name(safe_filename(str(Path(name).with_suffix("")) + " (%d)%s" % (n, Path(name).suffix)))
+            if dst.exists():
+                continue                                           # esgotou (2)-(19): não sobrescreve arquivo do usuário
+            ok = False
+            for _try in range(6):                          # o ffmpeg-filho pode estar fechando o arquivo agora
+                try:
+                    os.replace(p, dst)
+                    ok = True
+                    break
+                except OSError:
+                    time.sleep(0.5)
+            if not ok:
+                continue                                           # rename falhou: o .part fica, mas não conta como resgate
+            if dst.suffix.lower() == ".ts":
+                out.append(_remux_to_mp4(dst) or dst)              # .ts → .mp4; sem ffmpeg, fica o .ts (válido)
+            else:
+                out.append(dst)
+    except OSError:
+        pass
+    return out
+
+
+def sanitize_files(files: list) -> list:
+    """Renomeia em disco os arquivos produzidos para safe_filename; devolve os caminhos finais."""
+    out = []
+    for p in files:
+        want = safe_filename(p.name)
+        dst = p.with_name(want)
+        n = 2
+        while dst.exists() and dst != p and n < 20:      # colisão rara (mesmo título/sem [id])
+            stem, _, ext = want.rpartition(".")
+            dst = p.with_name("%s (%d).%s" % (stem, n, ext))
+            n += 1
+        if dst != p and not dst.exists():
+            try:
+                os.replace(p, dst)
+                out.append(dst)
+                continue
+            except OSError:
+                pass
+        out.append(p)
+    return out
 
 
 PIN_MEDIA_RE = re.compile(r"/videos/.*?([0-9a-f]{32})", re.I)
@@ -1299,15 +1453,134 @@ FF_MISSING_RE = re.compile(
     r"ffmpeg or avconv not found|Postprocessing:.*(ffmpeg|ffprobe)", re.I)
 
 
+def linkedin_player_info(data, title=""):
+    """Converte a lista completa do player em formatos fragmentados do yt-dlp.
+    Aceita apenas o CDN de vídeo LinkedIn e um único asset; nunca URLs locais/DRM.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get("playlists"), list) or not 1 <= len(data["playlists"]) <= 24:
+        raise ValueError("Lista de reprodução do LinkedIn inválida.")
+    asset, formats, total = "", [], 0
+    def media_url(raw):
+        nonlocal asset
+        if not isinstance(raw, str) or len(raw) > 8192 or any(c in raw for c in "\r\n"):
+            raise ValueError("Mídia do LinkedIn inválida.")
+        p = urlparse(raw)
+        m = re.match(r"^/playlist/vid/v2/([\w-]+)/hls[^/]*/[\w.-]+/\d+/\d+$", p.path)
+        if p.scheme != "https" or p.netloc.lower() != "dms.licdn.com" or not m or p.fragment:
+            raise ValueError("A lista do LinkedIn contém um endereço não permitido.")
+        if asset and asset != m.group(1):
+            raise ValueError("A lista mistura vídeos diferentes do LinkedIn.")
+        asset = m.group(1)
+        return raw
+    for index, playlist in enumerate(data["playlists"]):
+        if not isinstance(playlist, dict) or playlist.get("key"):
+            raise ValueError("Lista do LinkedIn inválida ou protegida.")
+        segments = playlist.get("segments")
+        if not isinstance(segments, list) or not segments:
+            raise ValueError("Lista do LinkedIn sem trechos.")
+        total += len(segments)
+        if total > 12000:
+            raise ValueError("Lista do LinkedIn excede o limite de trechos.")
+        fragments, previous_map, duration = [], "", 0.0
+        for segment in segments:
+            if not isinstance(segment, dict) or segment.get("key") or segment.get("byterange"):
+                raise ValueError("Trecho do LinkedIn inválido ou protegido.")
+            seconds = segment.get("duration")
+            if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 < seconds <= 60:
+                raise ValueError("Duração de trecho inválida.")
+            init = segment.get("map")
+            if init:
+                if not isinstance(init, dict): raise ValueError("Inicialização inválida.")
+                init_url = media_url(init.get("uri"))
+                if init_url != previous_map:
+                    fragments.append({"url": init_url})
+                    previous_map = init_url
+            fragments.append({"url": media_url(segment.get("uri")), "duration": seconds})
+            duration += seconds
+        attrs = playlist.get("attributes") or {}
+        if not isinstance(attrs, dict): raise ValueError("Formato inválido.")
+        res = attrs.get("RESOLUTION") or {}
+        if not isinstance(res, dict): raise ValueError("Formato inválido.")
+        codecs = str(attrs.get("CODECS") or "")[:100]
+        def dimension(k):
+            v = res.get(k)
+            return int(v) if isinstance(v, (int, float)) and 0 < v <= 16384 else None
+        formats.append({"format_id": str(index), "url": fragments[0]["url"], "protocol": "http_dash_segments",
+                        "fragments": fragments, "ext": "mp4", "width": dimension("width"), "height": dimension("height"),
+                        "vcodec": codecs.split(",")[0] or "h264", "acodec": "mp4a.40.2" if "mp4a" in codecs else "none"})
+    return {"id": asset, "title": _safe_name(title) or "LinkedIn " + asset, "duration": duration,
+            "extractor": "linkedin:player", "extractor_key": "LinkedInPlayer", "formats": formats}
+
+
+def linkedin_dash_asset(url):
+    p = urlparse(url or "")
+    m = re.fullmatch(r"/playlist/vid/dash/([\w-]+)/[\w-]+", p.path)
+    return m.group(1) if p.scheme == "https" and p.netloc.lower() == "dms.licdn.com" and not p.fragment and m else ""
+
+
+def linkedin_dash_info(xml, asset, title=""):
+    """Normaliza o MPD muxado do LinkedIn sem liberar extensões inseguras no motor."""
+    if len(xml) > 2_000_000 or b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
+        raise ValueError("Manifesto do LinkedIn inválido.")
+    root = ET.fromstring(xml)
+    ns = "{urn:mpeg:dash:schema:mpd:2011}"
+    if root.tag != ns + "MPD" or root.get("type") != "static" or len(root.findall(ns + "Period")) != 1:
+        raise ValueError("Formato de transmissão do LinkedIn não suportado.")
+    if any(e.tag == ns + "ContentProtection" for e in root.iter()):
+        raise ValueError("Vídeo do LinkedIn protegido.")
+    playlists = []
+    for rep in root.iter(ns + "Representation"):
+        seglist = rep.find(ns + "SegmentList")
+        if seglist is None or seglist.find(ns + "SegmentTimeline") is not None:
+            raise ValueError("Lista de segmentos do LinkedIn não suportada.")
+        seconds = float(seglist.get("duration", "0")) / float(seglist.get("timescale", "1"))
+        init = seglist.find(ns + "Initialization")
+        if init is None or init.get("range"):
+            raise ValueError("Inicialização do LinkedIn inválida.")
+        segments = []
+        for seg in seglist.findall(ns + "SegmentURL"):
+            if seg.get("mediaRange") or seg.get("indexRange"):
+                raise ValueError("Intervalo de segmento não suportado.")
+            segments.append({"uri": seg.get("media"), "duration": seconds,
+                             "map": {"uri": init.get("sourceURL")}})
+        codecs = rep.get("codecs", "")
+        if not codecs.startswith(("avc1", "av01", "hvc1", "hev1")) or "mp4a" not in codecs:
+            raise ValueError("Formato de vídeo do LinkedIn não suportado.")
+        playlists.append({"attributes": {"CODECS": codecs, "RESOLUTION": {
+            "width": int(rep.get("width", "0")), "height": int(rep.get("height", "0"))}}, "segments": segments})
+    info = linkedin_player_info({"playlists": playlists}, title)
+    if info["id"] != asset:
+        raise ValueError("O manifesto não corresponde ao vídeo selecionado.")
+    # A duração fixa dos segmentos inclui o último trecho parcial. O arquivo fornece a duração real.
+    info.pop("duration", None)
+    return info
+
+
+def fetch_linkedin_dash(url, title=""):
+    asset = linkedin_dash_asset(url)
+    if not asset:
+        raise ValueError("Endereço DASH do LinkedIn inválido.")
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            raise ValueError("Redirecionamento inesperado do manifesto LinkedIn.")
+    request = UrlRequest(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.linkedin.com/"})
+    with build_opener(NoRedirect).open(request, timeout=20) as response:
+        xml = response.read(2_000_001)
+    return linkedin_dash_info(xml, asset, title)
+
+
 def run_ytdlp(job_id: str, url: str, fmt: str, out_tmpl: str, referer: str,
               ua: str, cookies_file: str, extra: list, impersonate: bool, single: bool = True,
-              use_ffmpeg: bool = True):
+              use_ffmpeg: bool = True, live: bool = False):
     cmd, _has_ffmpeg = build_cmd(url, fmt, out_tmpl, referer, ua, cookies_file, extra, impersonate, single, use_ffmpeg)
+    if "--load-info-json" in extra:
+        cmd.pop()  # fonte interna validada; não extrair novamente a URL de um trecho isolado
     if not cmd[0]:
         raise RuntimeError("yt-dlp não encontrado. Rode o instalador do NOÉ VFX.")
 
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
         text=True, encoding="utf-8", errors="replace",
         creationflags=NO_WINDOW, bufsize=1, env=child_env(), cwd=str(BASE),
         start_new_session=not IS_WIN,
@@ -1317,6 +1590,12 @@ def run_ytdlp(job_id: str, url: str, fmt: str, out_tmpl: str, referer: str,
         canceled = job_id in CANCELED
     if canceled:
         kill_proc(proc)
+    if not live:
+        with JOBS_LOCK:
+            fresh = job_id not in LIVE_PROBED                     # uma sonda por job, não por tentativa
+            LIVE_PROBED.add(job_id)
+        if fresh:
+            threading.Thread(target=_live_probe, args=(job_id, _job_marker({"url": url})), daemon=True).start()
 
     state = {"last": time.time(), "stalled": False}
 
@@ -1329,6 +1608,11 @@ def run_ytdlp(job_id: str, url: str, fmt: str, out_tmpl: str, referer: str,
                 state["stalled"] = True
                 kill_proc(proc)
                 return
+        time.sleep(2)
+        try:
+            proc.stdout.close()              # proc morreu mas neto órfão segura o pipe: destrava o loop de leitura
+        except Exception:
+            pass
 
     threading.Thread(target=watchdog, daemon=True).start()
 
@@ -1337,6 +1621,8 @@ def run_ytdlp(job_id: str, url: str, fmt: str, out_tmpl: str, referer: str,
     try:
         for line in proc.stdout:
             state["last"] = time.time()
+            if _is_canceled(job_id) and proc.poll() is not None:
+                break                          # cancelou e o processo já morreu: não espera a netinha largar o pipe
             line = line.rstrip()
             if not line:
                 continue
@@ -1379,6 +1665,10 @@ def run_ytdlp(job_id: str, url: str, fmt: str, out_tmpl: str, referer: str,
 
             if line.startswith("ERROR:"):
                 job_update(job_id, error=line[6:].strip()[:300])
+    except (OSError, ValueError):
+        pass                                   # stdout fechado pelo watchdog com neto órfão no pipe
+    code = None
+    try:
         code = proc.wait()
     finally:
         with JOBS_LOCK:
@@ -1456,6 +1746,12 @@ def _is_canceled(job_id: str) -> bool:
         return job_id in CANCELED
 
 
+def _logsafe(s, n=24) -> str:
+    """String segura pro log forense: sem quebras/controle e só ASCII — injeção de
+    linha no log e UnicodeEncodeError no console cp1252 não derrubam a resposta."""
+    return re.sub(r"[\x00-\x1f]", " ", str(s)).encode("ascii", "replace").decode()[:n]
+
+
 def run_job(job_id: str, req: dict):
     if _is_canceled(job_id):
         job_update(job_id, status="canceled", progress="cancelado", finished=time.time())
@@ -1503,6 +1799,7 @@ def run_job(job_id: str, req: dict):
     job_update(job_id, status="downloading", output_dir=str(out_dir), progress="0%", started=started)
 
     cookies_file = ""
+    info_file = ""
     try:
         cookie_txt = req.get("cookies") or ""
         if cookie_txt.strip() and cfg.get("use_cookies", True):
@@ -1515,9 +1812,20 @@ def run_job(job_id: str, req: dict):
             Path(cookies_file).write_text(cookie_txt, encoding="utf-8")
 
         out_tmpl = str(out_dir / "%(title).100s [%(id)s].%(ext)s")
+        player_info = req.get("linkedin_info")
+        if player_info:
+            fd, info_file = tempfile.mkstemp(prefix="nvf_li_", suffix=".json", dir=str(TMP))
+            os.close(fd)
+            Path(info_file).write_text(json.dumps(player_info), encoding="utf-8")
         pmm = PIN_MEDIA_RE.search(urlparse(url or "").path or "")
         if pmm and (urlparse(url or "").hostname or "").endswith("pinimg.com"):
-            out_tmpl = str(out_dir / ((_safe_name(req.get("title")) or "Pinterest") + " [" + pmm.group(1)[:8] + "].%(ext)s"))
+            out_tmpl = str(out_dir / ((safe_filename(req.get("title")) or "Pinterest") + " [" + pmm.group(1)[:8] + "].%(ext)s"))
+        elif re.search(r"\.(m3u8|mpd)(?:$|[?#])", url or "", re.I):
+            # stream cru (live do Globoplay etc.): o yt-dlp nomeia "playlist"/"index" pelo
+            # basename da URL — o título que a extensão mandou é o nome do programa de verdade
+            nm = (safe_filename(req.get("title")) or "video")[:100].rstrip(" .")   # --trim-filenames 150 cortaria o [hash] do fim
+            sid = hashlib.sha1((url or "").encode("utf-8", "ignore")).hexdigest()[:8]
+            out_tmpl = str(out_dir / (nm + " [" + sid + "].%(ext)s"))
         imp = supports_impersonate()
         single = req.get("single", True) is not False
         use_ff = ffmpeg_state()["ok"]          # FFmpeg que realmente EXECUTA (não basta o arquivo existir)
@@ -1525,11 +1833,18 @@ def run_job(job_id: str, req: dict):
         def attempt(u, rf, imp_flag, tmpl=None):
             """Uma tentativa. Se o yt-dlp reclamar do FFmpeg (vídeo/áudio separados, m4a com erro),
             limpa os pedaços e refaz sozinho em formato único: nunca entrega vídeo sem áudio."""
-            nonlocal use_ff
+            nonlocal use_ff, info_file
+            if not info_file and linkedin_dash_asset(u):
+                dash_info = fetch_linkedin_dash(u, req.get("title", ""))
+                fd, info_file = tempfile.mkstemp(prefix="nvf_li_", suffix=".json", dir=str(TMP))
+                os.close(fd)
+                Path(info_file).write_text(json.dumps(dash_info), encoding="utf-8")
 
             def once(ff_on):
                 fm = (FORMAT_MAP if ff_on else FORMAT_NO_FFMPEG).get(quality, FORMAT_MAP["best"])
                 ex = list(extra)
+                if info_file:
+                    ex += ["--load-info-json", info_file]
                 if quality != "audio" and compat:
                     ex += ["-S", COMPAT_SORT]
                 if quality == "audio":
@@ -1538,8 +1853,12 @@ def run_job(job_id: str, req: dict):
                     if (req.get("audio_format") or "m4a") != "m4a":
                         fm = "bestaudio/best"
                     ex += ["-x", "--audio-format", req.get("audio_format") or "m4a", "--audio-quality", "0"]
+                if req.get("live"):
+                    # live não tem "fim": MPEG-TS progressivo — parar (cancelar) já deixa um arquivo válido
+                    ex += ["--hls-use-mpegts"]
                 job_update(job_id, ffmpeg_problem=False)
-                return run_ytdlp(job_id, u, fm, tmpl or out_tmpl, rf, ua, cookies_file, ex, imp_flag, single, ff_on)
+                return run_ytdlp(job_id, u, fm, tmpl or out_tmpl, rf, ua, cookies_file, ex, imp_flag, single, ff_on,
+                                 live=bool(req.get("live")))
 
             code_, tail_, pct_ = once(use_ff)
             with JOBS_LOCK:
@@ -1563,14 +1882,14 @@ def run_job(job_id: str, req: dict):
                 for i, mu in enumerate(pin_urls):
                     if _is_canceled(job_id):
                         break
-                    stem = (pin_title or "Pinterest") + (" (%d de %d)" % (i + 1, total) if total > 1 else "") + " [%s]" % pin_id
+                    stem = (safe_filename(pin_title or "Pinterest") or "Pinterest") + (" (%d de %d)" % (i + 1, total) if total > 1 else "") + " [%s]" % pin_id
                     job_update(job_id, progress=("vídeo %d de %d..." % (i + 1, total)) if total > 1 else "0%")
                     c_, last_tail, _p = attempt(mu, "https://www.pinterest.com/", imp, str(out_dir / (stem + ".%(ext)s")))
                     if c_ != 0 and imp and not _is_canceled(job_id):
                         c_, last_tail, _p = attempt(mu, "https://www.pinterest.com/", False, str(out_dir / (stem + ".%(ext)s")))
                 if compat and quality != "audio":
                     compat_fix(job_id, out_dir, started - 2)
-                got = _videos_since(out_dir, started - 2)
+                got = sanitize_files(_videos_since(out_dir, started - 2))
                 if _is_canceled(job_id):
                     job_update(job_id, status="canceled", progress="cancelado", error="", finished=time.time())
                 elif got:
@@ -1599,9 +1918,23 @@ def run_job(job_id: str, req: dict):
 
         if compat and quality != "audio" and not _is_canceled(job_id):
             compat_fix(job_id, out_dir, started - 2)
+        sanitize_files(_videos_since(out_dir, started - 2))
         ig_videos = _videos_since(out_dir, started - 2) if (IG_POST_URL_RE.match(url or "") and code != 0) else []
         if _is_canceled(job_id):
-            job_update(job_id, status="canceled", progress="cancelado", error="", finished=time.time())
+            # live de nascença (req.live) saiu com --hls-use-mpegts → o .part é TS válido.
+            # Live marcada pela SONDA nasceu sem a flag: um .part de MP4 fragmentado é inútil —
+            # exige conteúdo TS igual um VOD (o header 0x47 decide, não a flag)
+            is_live = bool(req.get("live"))
+            with JOBS_LOCK:
+                job_now = dict(JOBS.get(job_id) or req)
+            rescued = _rescue_partials(out_dir, started - 2, ts_only=not is_live,
+                                       markers=_job_markers(job_now), job_id=job_id)
+            if rescued:
+                # "Parar e salvar" em live: o trecho gravado virou arquivo — conta como concluído, não cancelado
+                job_update(job_id, status="done", progress="gravação salva", file=str(rescued[-1]),
+                           files=len(rescued), error="", finished=time.time())
+            else:
+                job_update(job_id, status="canceled", progress="cancelado", error="", finished=time.time())
         elif ig_videos:
             # carrossel: os itens que são FOTO falham de propósito; o que importa é que os vídeos foram salvos
             job_update(job_id, status="done", progress="100%", file=str(ig_videos[-1]), files=len(ig_videos),
@@ -1611,6 +1944,7 @@ def run_job(job_id: str, req: dict):
                 recorded = (JOBS.get(job_id) or {}).get("file") or ""
             found = Path(recorded) if recorded and Path(recorded).exists() else _newest_since(out_dir, started - 2)
             if found:
+                found = sanitize_files([found])[0]
                 n_videos = len(_videos_since(out_dir, started - 2)) if IG_POST_URL_RE.match(url or "") else 1
                 job_update(job_id, status="done", progress="100%", file=str(found), files=n_videos, finished=time.time())
             else:
@@ -1629,6 +1963,9 @@ def run_job(job_id: str, req: dict):
     except Exception as exc:
         job_update(job_id, status="error", error=str(exc)[:400], finished=time.time())
     finally:
+        if info_file:
+            try: os.remove(info_file)
+            except OSError: pass
         if cookies_file:
             try:
                 os.remove(cookies_file)
@@ -1641,12 +1978,29 @@ def _prune_jobs_locked():
     for jid in [j for j, v in JOBS.items() if v.get("finished") and now - v["finished"] > JOB_TTL]:
         JOBS.pop(jid, None)
         CANCELED.discard(jid)
+        LIVE_PROBED.discard(jid)
     if len(JOBS) > MAX_JOBS_KEPT:
         done = sorted((v for v in JOBS.values() if v["status"] not in ACTIVE
                        and not (v.get("import_app") and not v.get("imported"))), key=lambda v: v.get("created", 0))
         for v in done[: len(JOBS) - MAX_JOBS_KEPT]:
             JOBS.pop(v["id"], None)
             CANCELED.discard(v["id"])
+            LIVE_PROBED.discard(v["id"])
+
+
+def _dedup_key(raw: str) -> str:
+    """Mesma URL escrita diferente = mesmo vídeo: host minúsculo sem www./m., path sem barra final."""
+    try:
+        u = urlparse(normalize_target(raw, "")[0].split("#")[0])
+        host = (u.hostname or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        elif host.startswith("m."):
+            host = host[2:]
+        path = re.sub(r"/+$", "", u.path or "")
+        return host + path + (("?" + u.query) if u.query else "")
+    except Exception:
+        return str(raw or "")
 
 
 def new_job(req: dict):
@@ -1655,8 +2009,12 @@ def new_job(req: dict):
     with JOBS_LOCK:
         _prune_jobs_locked()
         active = [j for j in JOBS.values() if j["status"] in ACTIVE]
+        want = _dedup_key(req["url"])
         for j in active:
-            if (j.get("url") == req["url"] and j.get("quality") == quality
+            if (j["status"] != "stopping"                             # job parando não conta: deixa nascer um novo
+                    and j["id"] not in CANCELED                       # cancel pedido mas worker ainda rodando: idem
+                    and _dedup_key(j.get("url") or "") == want
+                    and j.get("quality") == quality
                     and j.get("audio_format", "m4a") == req.get("audio_format", "m4a")
                     and j.get("import_app", "") == req.get("import_app", "")
                     and j.get("requested_dir", "") == req.get("project_dir", "")):
@@ -1676,9 +2034,142 @@ def new_job(req: dict):
             "created": time.time(),
             "import_app": req.get("import_app", ""),
             "project": req.get("project", ""),
+            "batch": req.get("batch", ""),                 # itens de lista têm janela própria de progresso
+            "live": bool(req.get("live")),                 # live: gravação "infinita" — a UI mostra tempo gravado, não %
         }
     EXECUTOR.submit(run_job, job_id, req)
     return job_id, False
+
+
+_MARKER_RES = [
+    re.compile(r"[?&]v=([-\w]{6,})"),                                   # YouTube watch/embed (?v=ID)
+    re.compile(r"(?:youtu\.be|/shorts/)/?([-\w]{6,})"),                 # youtu.be/ID, /shorts/ID
+    re.compile(r"globoplay\.globo\.com/v/(\d{5,})", re.I),              # Globo
+    re.compile(r"activity[:-](\d{8,})"),                                # LinkedIn urn:li:activity:71…
+    re.compile(r"dailymotion\.com/video/([-\w]{5,})", re.I),            # Dailymotion
+    re.compile(r"pinterest\.[\w.]+/pin/(\d{6,})", re.I),                # Pinterest
+    re.compile(r"(?:tiktok\.com|instagram\.com)/[^?#]*(?:video|p|reel|reels|tv)/([-\w]{6,})", re.I),
+    re.compile(r"(?:x|twitter)\.com/\w+/status/(\d{8,})", re.I),        # X/Twitter
+    re.compile(r"vimeo\.com/(?:video/)?(\d{6,})", re.I),                # Vimeo
+    re.compile(r"/videos?/(\d{6,})"),                                   # Facebook e cia (id numérico)
+    re.compile(r"/([-\w]{10,})(?:[/?#.]|$)"),                           # último segmento longo
+    re.compile(r"([-\w]{10,})"),                                        # qualquer palavra longa (último caso)
+]
+
+
+def _job_markers(job):
+    """Cadeias que identificam ESTE job na linha de comando e no nome do .part:
+    o id do vídeo extraído por site + os nomes-base dos arquivos que o yt-dlp anunciou
+    (all_files cobre URLs sem id legível — Globo, LinkedIn, CDN — porque o .part
+    sempre leva o nome de saída, que inclui [id])."""
+    u = str(job.get("url") or "")
+    out = []
+    for rx in _MARKER_RES:
+        m = rx.search(u)
+        if m:
+            out.append(m.group(1))
+            break
+    for f in job.get("all_files") or []:
+        stem = Path(str(f)).stem
+        if stem:
+            out.append(stem)
+        mm = re.search(r"\[([^\]]{4,})\]", stem)                        # "título [id].mp4" → id
+        if mm:
+            out.append(mm.group(1))
+    seen = set()
+    return [x for x in out if x and not (x in seen or seen.add(x))]
+
+
+def _job_marker(job):
+    ms = _job_markers(job)
+    return ms[0] if ms else ""
+
+
+LIVE_CMD_RE = re.compile(r"yt_live_broadcast|live_start_index|live_status|/hls/live/|/api/manifest/hls_playlist", re.I)
+LIVE_PROBED = set()
+
+
+def _live_probe(job_id: str, marker: str):
+    """Sonda: o cmdline do ffmpeg-filho entrega a live (manifesto yt_live_broadcast, live_start_index).
+    Cobre as entradas que não passam a flag do cliente (popup, menu, selo novo do YouTube).
+    O ffmpeg só nasce DEPOIS do yt-dlp extrair o manifesto (5-15s): insiste por até 2min."""
+    if not IS_WIN or not marker:
+        return
+    deadline = time.time() + 120
+    ps = ("$ErrorActionPreference='SilentlyContinue';"
+          "Get-CimInstance Win32_Process -Filter \"Name='ffmpeg.exe'\" |"
+          " Where-Object { $_.CommandLine -like '*%s*' } |"
+          " Select-Object -ExpandProperty CommandLine" % marker.replace("'", "''"))
+    while time.time() < deadline:
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+        if not job or job.get("status") not in ACTIVE or job.get("live"):
+            return                                               # acabou ou já sabe que é live
+        try:
+            r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               timeout=20, creationflags=NO_WINDOW)
+            if r.returncode == 0 and LIVE_CMD_RE.search(r.stdout or ""):
+                job_update(job_id, live=True)                    # flag retroativa: UI vira live na próxima poll
+                return
+        except Exception:
+            pass
+        time.sleep(3)
+
+
+def _orphan_sweep(job_id: str, markers, since: float = 0):
+    """Mata restos órfãos DESTE job (yt-dlp/ffmpeg/ffprobe) cuja linha de comando contenha
+    um dos marcadores E criados depois de `since`. O yt-dlp.exe é um bootstrapper: se ele
+    morre antes, o yt-dlp real e o ffmpeg ficam soltos — segurando o pipe de stdout do runner
+    e o arquivo aberto. Exclui a árvore dos demais jobs — dois downloads do mesmo vídeo
+    não se matam."""
+    markers = [m for m in (markers or []) if m]
+    if not IS_WIN or not markers:
+        return
+    with JOBS_LOCK:
+        other = [p.pid for jid, p in PROCS.items() if jid != job_id and p.poll() is None]
+    like = " -or ".join("$_.CommandLine -like '*%s*'" % str(m).replace("'", "''") for m in markers)
+    flt = "(%s)" % like
+    if since:
+        flt += " -and $_.CreationDate -ge [DateTimeOffset]::FromUnixTimeSeconds(%d).LocalDateTime" % int(since - 60)
+    ps = ("$ErrorActionPreference='SilentlyContinue';"
+          "$all = Get-CimInstance Win32_Process;"
+          "$parent = @{}; $all | ForEach-Object { $parent[[int]$_.ProcessId] = [int]$_.ParentProcessId };"
+          "$roots = @(%s);"
+          "function In-Tree($p_) { $cur = [int]$p_; while ($cur -gt 0) {"
+          " if ($roots -contains $cur) { return $true }; $cur = [int]$parent[$cur] } return $false }"
+          "$all | Where-Object { ($_.Name -in 'yt-dlp.exe','ffmpeg.exe','ffprobe.exe') -and %s -and -not (In-Tree $_.ProcessId) } |"
+          " ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" % (",".join(str(x) for x in other) or "0", flt))
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                       capture_output=True, timeout=25, creationflags=NO_WINDOW)
+    except Exception:
+        pass
+
+
+def _sweep_stale_procs(boot_time: float):
+    """Servidor reiniciado no meio de downloads: os yt-dlp/ffmpeg da instância anterior ficam
+    órfãos (sem job, sem dono) — continuam gravando .part ou segurando arquivos. Mata os
+    criados ANTES deste boot que carreguem nossa assinatura (binário da pasta ou .part)."""
+    if not IS_WIN:
+        return
+    odir = str(load_cfg().get("output_dir") or "").replace("'", "''")
+    sig = " -or ".join("$_.CommandLine -like '*%s*'" % s
+                       for s in ("NoeVFXDownloader", "Noe VFX Downloader", "noevfx-downloader"))
+    if odir:                                                         # .part solto só conta se gravar NA NOSSA pasta
+        sig = "(%s -or ($_.CommandLine -like '*.part*' -and $_.CommandLine -like '*%s*'))" % (sig, odir)
+    else:
+        sig = "(%s)" % sig
+    ps = ("$ErrorActionPreference='SilentlyContinue';"
+          "$cut = [DateTimeOffset]::FromUnixTimeSeconds(%d).LocalDateTime;"
+          "Get-CimInstance Win32_Process -Filter \"Name='yt-dlp.exe' or Name='ffmpeg.exe' or Name='ffprobe.exe'\" |"
+          " Where-Object { $_.CreationDate -lt $cut -and " + sig + " } |"
+          " ForEach-Object { Stop-Process -Id $_.ProcessId -Force }") % int(boot_time)
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                       capture_output=True, timeout=25, creationflags=NO_WINDOW)
+    except Exception:
+        pass
 
 
 def cancel_job(job_id: str) -> bool:
@@ -1686,13 +2177,34 @@ def cancel_job(job_id: str) -> bool:
         job = JOBS.get(job_id)
         if not job or job["status"] not in ACTIVE:
             return False
+        if job_id in CANCELED:
+            return True                                    # cancel já pedido: 2º pedido é sucesso idempotente, sem kill/reap duplicado
         CANCELED.add(job_id)
         proc = PROCS.get(job_id)
         queued = job["status"] == "queued"
     if queued:
         job_update(job_id, status="canceled", progress="cancelado", finished=time.time())
+    else:
+        job_update(job_id, status="stopping", progress="parando…")   # mesmo sem proc (worker entre tentativas) a UI mostra a parada
     if proc is not None:
-        kill_proc(proc)
+        kill_proc(proc)                                  # /T derruba raiz + yt-dlp real + ffmpeg de uma vez
+        # raiz já morta? sobra neto órfão segurando pipe/arquivo — a varredura roda em
+        # thread pra não segurar a resposta do /cancel (WMI leva alguns segundos)
+        threading.Thread(target=_orphan_sweep, args=(job_id, _job_markers(job), job.get("created") or 0),
+                         daemon=True).start()
+
+    def _reap(jid=job_id):
+        """Kill/resgate travados não podem deixar o job eterno em 'stopping' (slot + pilula presos).
+        Se o resgate terminar antes, vira done/canceled e isto não faz nada."""
+        time.sleep(180)
+        with JOBS_LOCK:
+            j = JOBS.get(jid)
+            if j and j.get("status") == "stopping":
+                j["status"] = "canceled"
+                j["progress"] = "cancelado"
+                j["finished"] = time.time()
+
+    threading.Thread(target=_reap, daemon=True).start()
     return True
 
 
@@ -1824,7 +2336,7 @@ def _pick_windows() -> str:
         env = dict(os.environ, NVF_INI=load_cfg().get("output_dir") or "", NVF_OUT=tmp)
         subprocess.run(
             ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", PICK_PS],
-            timeout=900, creationflags=NO_WINDOW, env=env, stdin=subprocess.DEVNULL,
+            timeout=280, creationflags=NO_WINDOW, env=env, stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         return Path(tmp).read_text(encoding="utf-8-sig", errors="replace").strip()
@@ -1848,7 +2360,7 @@ def pick_folder() -> str:
                 r = subprocess.run(
                     ["osascript", "-e",
                      'POSIX path of (choose folder with prompt "NOE VFX - escolha a pasta padrao para salvar os videos")'],
-                    capture_output=True, text=True, timeout=600,
+                    capture_output=True, text=True, timeout=280,    # o cliente desiste aos 300s — o diálogo não pode viver mais que isso
                 )
                 if r.returncode == 0:
                     return r.stdout.strip()
@@ -1862,7 +2374,7 @@ def pick_folder() -> str:
             ):
                 if shutil.which(tool):
                     try:
-                        r = subprocess.run([tool] + args, capture_output=True, text=True, timeout=600)
+                        r = subprocess.run([tool] + args, capture_output=True, text=True, timeout=280)
                         if r.returncode == 0:
                             return r.stdout.strip()
                     except Exception:
@@ -1871,7 +2383,7 @@ def pick_folder() -> str:
         fd, tmp = tempfile.mkstemp(prefix="nvf_pick_", suffix=".txt", dir=str(TMP))
         os.close(fd)
         try:
-            subprocess.run([sys.executable, "-c", PICK_SCRIPT, tmp], timeout=600,
+            subprocess.run([sys.executable, "-c", PICK_SCRIPT, tmp], timeout=280,
                            creationflags=NO_WINDOW)
             return Path(tmp).read_text(encoding="utf-8", errors="replace").strip()
         except Exception:
@@ -1984,10 +2496,58 @@ def collection_entries(data, source):
             "truncated": len(raw) > COLLECTION_LIMIT, "limit": COLLECTION_LIMIT}
 
 
+def feed_url_reason(url: str) -> str:
+    """Endereço de feed/listagem não identifica UM vídeo (o extrator baixaria um vídeo qualquer).
+    Devolve o rótulo do site quando a URL é genérica, senão ""."""
+    try:
+        u = urlparse(url)
+        host = (u.hostname or "").lower()
+        p = u.path or "/"
+        seg = p.split("/")[1] if len(p) > 1 and p.startswith("/") else ""
+        root = p in ("", "/")
+        if host.endswith("linkedin.com"):
+            return "LinkedIn" if root or p.rstrip("/").lower() == "/feed" else ""   # /feed/update/urn:li:... já É um post
+        if host == "youtu.be":
+            return "YouTube" if root else ""
+        if host.endswith("youtube.com"):
+            return "YouTube" if root or seg in ("feed", "results", "gaming", "music", "premium", "kids",
+                                                "playlist", "hashtag", "channel", "user", "show") or seg.startswith("@") else ""
+        if host.endswith("tiktok.com"):
+            return "TikTok" if root or seg.lower() in ("foryou", "following", "discover", "explore", "search") else ""
+        if host.endswith("instagram.com"):
+            return "Instagram" if root or p.rstrip("/").lower() in ("/explore", "/reels") else ""
+        if host in ("x.com", "www.x.com", "twitter.com", "www.twitter.com"):
+            return "X" if root or seg.lower() in ("home", "explore", "i") else ""
+        if host.endswith("facebook.com"):
+            return "Facebook" if root or p.rstrip("/").lower() in ("/watch", "/reel", "/video", "/stories", "/marketplace", "/groups") else ""
+        if host.endswith("vimeo.com"):
+            return "Vimeo" if root or seg.lower() in ("categories", "channels", "groups", "feed", "watch",
+                                                      "upgrade", "features", "blog", "ondemand") else ""
+        if host.endswith("dailymotion.com"):
+            return "Dailymotion" if root or not p.lower().startswith("/video/") else ""
+        if host == "dai.ly":
+            return "Dailymotion" if root else ""
+        if host.endswith("twitch.tv"):
+            return "Twitch" if root or seg.lower() in ("directory", "p", "downloads", "jobs", "turbo", "prime") \
+                or p.rstrip("/").lower().endswith("/videos") else ""
+        if "pinterest." in host:
+            return "Pinterest" if root or seg.lower() in ("ideas", "today", "search") else ""
+        if host.endswith("globo.com"):              # g1, ge, gshow...: matéria é .ghtml; home e seções (/) são listagem
+            if "globoplay." in host:
+                return "Globoplay" if root or not re.match(r"/v/\d+", p.lower()) else ""
+            return "Globo" if root or (p.endswith("/") and ".ghtml" not in p.lower()) else ""
+    except Exception:
+        pass
+    return ""
+
+
 def prepare_download(body):
     url = clean_url(body.get("url"))
     if not url:
         raise ValueError("URL inválida")
+    site = feed_url_reason(url)
+    if site:
+        raise ValueError("%s: use o botão sobre o vídeo no feed ou escolha um vídeo identificado na extensão. O endereço do feed não identifica um vídeo." % site)
     quality = body.get("quality") or load_cfg().get("default_quality") or "best"
     if not isinstance(quality, str) or quality not in FORMAT_MAP:
         raise ValueError("Qualidade inválida")
@@ -2005,7 +2565,10 @@ def prepare_download(body):
            "fallback_referer": clean_url(body.get("fallbackReferer") or body.get("fallback_referer"), 2048),
            "userAgent": clean_header(body.get("userAgent"), 300), "title": clean_header(body.get("title"), 300),
            "cookies": clean_cookies(body.get("cookies")), "organizeBySite": body.get("organizeBySite") is True,
-           "single": body.get("single") is not False}
+           "single": body.get("single") is not False,
+           "live": body.get("live") is True}
+    if body.get("linkedinManifest") is not None:
+        req["linkedin_info"] = linkedin_player_info(body["linkedinManifest"], req["title"])
     if isinstance(body.get("compat"), bool):
         req["compat_override"] = body["compat"]
     if target:
@@ -2060,7 +2623,8 @@ def create_batch(body):
         if url not in seen:
             seen.add(url)
             items.append({"url": url, "title": clean_header(item.get("title"), 300), "status": "pending",
-                          "fallbackStream": clean_url(item.get("fallbackStream")), "referer": clean_url(item.get("referer"))})
+                          "fallbackStream": clean_url(item.get("fallbackStream")), "referer": clean_url(item.get("referer")),
+                          "linkedin_info": linkedin_player_info(item["linkedinManifest"], item.get("title", "")) if item.get("linkedinManifest") is not None else None})
     batch_id = uuid.uuid4().hex[:16]
     with BATCH_LOCK:
         for key in list(BATCHES):
@@ -2086,8 +2650,8 @@ def create_batch(body):
                             it["status"] = "canceled"
                     pending = None
                 if pending and active < 8:
-                    req = dict(base, url=pending["url"], title=pending["title"], single=True,
-                               fallback_stream=pending["fallbackStream"], referer=pending["referer"] or base.get("referer", ""))
+                    req = dict(base, url=pending["url"], title=pending["title"], single=True, batch=batch_id,
+                               fallback_stream=pending["fallbackStream"], referer=pending["referer"] or base.get("referer", ""), linkedin_info=pending.get("linkedin_info"))
                     if base.get("batch_site_folder"):
                         site = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", urlparse(req["url"]).netloc) or "outros"
                         req["project_dir"] = str(Path(base["project_dir"]) / site)
@@ -2278,7 +2842,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/jobs":
             with JOBS_LOCK:
-                items = sorted(JOBS.values(), key=lambda j: j.get("created", 0), reverse=True)[:25]
+                items = sorted(JOBS.values(), key=lambda j: j.get("created", 0), reverse=True)[:MAX_ACTIVE]
                 items = [dict(j) for j in items]
             self._json(200, {"jobs": items})
             return
@@ -2374,13 +2938,19 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/batch/cancel":
+            ids = []
             with BATCH_LOCK:
                 batch = BATCHES.get(str(body.get("id") or ""))
                 if batch:
                     batch["canceled"] = True
-                    for item in batch["items"]:
-                        if item.get("job_id"):
-                            cancel_job(item["job_id"])
+                    ids = [it["job_id"] for it in batch["items"] if it.get("job_id")]
+            if batch:
+                try:
+                    print("[%s] batch/cancel -> %d jobs" % (time.strftime("%H:%M:%S"), len(ids)), flush=True)   # forense (0 jobs = lote só com pendências)
+                except Exception:
+                    pass                                                  # o log nunca pode derrubar a resposta
+                for jid in ids:                                           # cancels fora do lock: kill_proc pode levar segundos por job
+                    cancel_job(jid)
             self._json(200 if batch else 404, {"ok": bool(batch)})
             return
 
@@ -2406,7 +2976,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/cancel":
             jid = body.get("id", "")
+            src = _logsafe(body.get("src") or "?")
             ok = isinstance(jid, str) and cancel_job(jid)
+            try:
+                print("[%s] cancel %s <- %s -> %s" % (time.strftime("%H:%M:%S"), _logsafe(jid, 40), src,
+                      "ok" if ok else "recusado (job não ativo)"), flush=True)   # forense: quem pediu e quando (server.log)
+            except Exception:
+                pass                                           # o log nunca pode derrubar a resposta do cancel
             self._json(200 if ok else 404, {"ok": ok})
             return
 
@@ -2562,7 +3138,7 @@ def update_apply_package(zip_path: Path, latest: str, root: Path, plat: str) -> 
     with zipfile.ZipFile(zip_path) as z:
         names = [n for n in z.namelist() if n.startswith(prefix) and not n.endswith("/")]
         for n in z.namelist():
-            if n.startswith("/") or ".." in n.split("/") or ":" in n:
+            if n.startswith("/") or ".." in n.replace("\\", "/").split("/") or ":" in n:
                 raise RuntimeError("pacote com caminho inválido")
         want = {n[len(prefix):]: n for n in names if n.startswith(prefix + "extension/") or n == prefix + "server/server.py"}
         if "extension/manifest.json" not in want or "server/server.py" not in want:
@@ -2798,11 +3374,15 @@ def main():
     panel_token()                       # o painel do Premiere/AE lê esta chave do disco
     threading.Thread(target=ensure_panel, daemon=True).start()      # painel para quem atualizou de uma 3.0.x
     sweep_temp()
+    threading.Thread(target=_sweep_stale_procs, args=(time.time(),), daemon=True).start()   # órfãos da instância anterior
     threading.Thread(target=supports_impersonate, daemon=True).start()   # aquece em segundo plano
     threading.Thread(target=ffmpeg_state, daemon=True).start()
     threading.Thread(target=_updater_loop, daemon=True).start()
-    print("[NOÉ VFX] Servidor %s (api %d) em http://%s:%d" % (VERSION, API_VERSION, HOST, PORT), flush=True)
-    print("[NOÉ VFX] Pasta padrão: %s" % load_cfg().get("output_dir"), flush=True)
+    try:
+        print("[NOÉ VFX] Servidor %s (api %d) em http://%s:%d" % (VERSION, API_VERSION, HOST, PORT), flush=True)
+        print("[NOÉ VFX] Pasta padrão: %s" % load_cfg().get("output_dir"), flush=True)
+    except Exception:
+        pass                                             # caminho com char fora do cp1252 não pode derrubar o boot
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

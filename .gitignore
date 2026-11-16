@@ -31,3 +31,12 @@ panel_token.txt
 
 # Protótipo local e capturas de aprovação; site público em docs/site/
 /docs/preview-branding/
+
+# Material de autoria local e ferramentas pessoais
+/docs/design/
+/.agents/
+/.claude/
+/skills-lock.json
+/tmp/
+/nul
+/transitions/

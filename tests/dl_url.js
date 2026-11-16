@@ -36,7 +36,7 @@ function rawReq(port, method, p, body, headers = {}) {
     const st = j.status + " " + (j.progress || ""); if (st !== last) { last = st; console.log("  ", st.slice(0, 110)); }
     if (["done", "error", "canceled"].includes(j.status)) break;
   }
-  if (j && !["done", "error", "canceled"].includes(j.status)) { await rawReq(sp, "POST", "/cancel", { job_id: j.id }, H); console.log("  (cancelado por tempo)"); await sleep(3000); j = ((await rawReq(sp, "GET", "/jobs", null, H)).json.jobs || [])[0]; }
+  if (j && !["done", "error", "canceled"].includes(j.status)) { await rawReq(sp, "POST", "/cancel", { id: j.id, src: "dl_url.js" }, H); console.log("  (cancelado por tempo)"); await sleep(3000); j = ((await rawReq(sp, "GET", "/jobs", null, H)).json.jobs || [])[0]; }
   console.log("resultado:", j && j.status, j && (j.error || ""));
   for (const f of (fs.existsSync(dl) ? fs.readdirSync(dl) : [])) {
     const p = path.join(dl, f);

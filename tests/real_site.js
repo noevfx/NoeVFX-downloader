@@ -147,7 +147,7 @@ function rawReq(port, method, p, body, headers = {}) {
           const st = j.status + " " + (j.progress || ""); if (st !== last) { last = st; log("  job:", st.slice(0, 100)); }
           if (["done", "error", "canceled"].includes(j.status)) break;
         }
-        if (j && !["done", "error", "canceled"].includes(j.status)) { await rawReq(sp, "POST", "/cancel", { job_id: j.id }, H); log("  (cancelado após", SECS, "s)"); await sleep(4000); j = (await jobs())[0]; }
+        if (j && !["done", "error", "canceled"].includes(j.status)) { await rawReq(sp, "POST", "/cancel", { id: j.id, src: "real_site.js" }, H); log("  (cancelado após", SECS, "s)"); await sleep(4000); j = (await jobs())[0]; }
         log("resultado do job:", j && j.status, j && (j.error || ""));
         const files = fs.existsSync(dl) ? fs.readdirSync(dl).filter((f) => !f.endsWith(".part") && !f.endsWith(".ytdl")) : [];
         log("arquivos na pasta de destino:", files);

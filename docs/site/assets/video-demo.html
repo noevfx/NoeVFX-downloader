@@ -1,5 +1,21 @@
-<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-    :host { all: initial; }
+<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Menu do Downloader — demonstração</title><style>
+    :host {
+      all: initial;
+      /* ---- transitions.dev motion tokens — um lugar só pra afinar toda a motion da pilula ---- */
+      --toast-open: 350ms; --toast-close: 250ms; --toast-distance: 16px; --toast-blur: 2px; --toast-scale: .97;
+      --toast-ease: cubic-bezier(.22,1,.36,1);
+      --morph-open-dur: 250ms; --morph-close-dur: 150ms; --morph-ease: cubic-bezier(.22,1,.36,1);
+      --morph-close-ease: cubic-bezier(.22,1,.36,1); --morph-fade-dur: 200ms; --morph-blur: 2px; --morph-scale: .97;
+      --acc-expand: 250ms; --acc-collapse: 250ms; --acc-chevron: 250ms; --acc-ease: cubic-bezier(.22,1,.36,1);
+      --stack-open: 350ms; --stack-close: 250ms; --stack-ease: cubic-bezier(.22,1,.36,1);
+      --stack-rise: 60px; --stack-blur: 2px; --stack-scale: .97; --stack-peek: 12px; --stack-spread-gap: 12px;
+      --stack-depth-scale: .06; --stack-depth-fade: .4; --stack-depth1-blur: 1px; --stack-depth2-blur: 2px;
+      --shimmer-dur: 2000ms; --shimmer-ease: linear; --shimmer-band: 400%;
+      --shimmer-base: rgba(255,255,255,.78); --shimmer-highlight: #fff;
+      --check-dur: 500ms; --check-path-delay: 80ms; --check-blur-from: 10px; --check-y-amount: 40px; --check-rotate-from: 80deg;
+      --check-ease-out: cubic-bezier(.22,1,.36,1); --check-ease-bob: cubic-bezier(.34,1.35,.64,1);
+      --shake-dur: 280ms; --shake-distance: 6px; --shake-overshoot: 4px; --shake-ease: cubic-bezier(.22,1,.36,1);
+    }
     * { box-sizing: border-box; font-family: "Segoe UI", Roboto, system-ui, -apple-system, sans-serif; }
     .fab {
       position: fixed; z-index: 2147483647; display: none;
@@ -9,21 +25,44 @@
       box-shadow: 0 6px 20px rgba(0,0,0,.45);
       align-items: center; justify-content: center; cursor: grab;
       touch-action: none; user-select: none;
-      transition: background .12s ease, border-color .12s ease;
+      transition: background .12s ease, border-color .12s ease,
+                  opacity var(--morph-fade-dur) var(--morph-close-ease), scale var(--morph-close-dur) var(--morph-close-ease), filter var(--morph-fade-dur) ease;
     }
+    .fab.morphed { opacity: 0; scale: .8; filter: blur(var(--morph-blur)); pointer-events: none; }   /* o botão "virou" o painel */
     .fab:hover { background: #0066FF; border-color: #4d94ff; }
+    :is(button, select, [role="button"]):focus-visible { outline:2px solid #9bc5ff; outline-offset:2px; }
     .fab svg { width: 22px; height: 22px; display: block; pointer-events: none; }
     .panel {
-      position: fixed; z-index: 2147483647; display: none; width: 268px;
+      position: fixed; z-index: 2147483647; width: min(268px, calc(100vw - 16px));
+      box-sizing:border-box; max-height:calc(100dvh - 16px); overflow-y:auto; overscroll-behavior:contain;
       padding: 10px; border-radius: 14px; border: 1px solid rgba(0,102,255,.35);
       background: rgba(15,17,23,.97); color: #f3f4f8;
       box-shadow: 0 14px 40px rgba(0,0,0,.6);
       backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       font-size: 12px; line-height: 1.35;
+      /* transitions.dev "plus→menu morph": o painel cresce a partir do FAB — o transform-origin
+         é calculado em JS pro canto do botão (o box morfa do gatilho, não só aparece ao lado) */
+      transform-origin: 100% 50%;
+      /* transitions.dev "menu dropdown": popover cresce do gatilho — scale .97→1, abre 250ms,
+         fecha 150ms, sem blur nem slide (o efeito vem do transform-origin, não de exagero) */
+      opacity: 0; scale: var(--morph-scale);
+      visibility: hidden; pointer-events: none;
+      transition: opacity var(--morph-close-dur) var(--morph-close-ease), scale var(--morph-close-dur) var(--morph-close-ease),
+                  visibility 0s linear var(--morph-close-dur);
+    }
+    .panel.is-open {
+      opacity: 1; scale: 1;
+      visibility: visible; pointer-events: auto;
+      transition: opacity var(--morph-open-dur) var(--morph-ease), scale var(--morph-open-dur) var(--morph-ease),
+                  visibility 0s linear 0s;
     }
     .panel .head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
     .panel .head b { font-size: 12.5px; font-weight: 700; letter-spacing:.2px; }
     .panel .head span.brand { color:#4d94ff; font-size:10px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; }
+    .panel .head .x { all:unset; margin-left:auto; cursor:pointer; flex-shrink:0; width:22px; height:22px;
+      display:flex; align-items:center; justify-content:center; border-radius:6px;
+      font-size:14px; font-weight:800; line-height:1; color:#8d98ae; }
+    .panel .head .x:hover { background:rgba(255,255,255,.12); color:#fff; }
     .panel .dest {
       display:flex; align-items:center; gap:6px; padding:6px 8px; margin-bottom:8px;
       border-radius:8px; background: rgba(0,102,255,.12); border:1px solid rgba(0,102,255,.22);
@@ -34,6 +73,7 @@
       all: unset; cursor:pointer; color:#7fb0ff; font-size:10.5px; font-weight:700; white-space:nowrap;
     }
     .panel .grid { display:grid; grid-template-columns: 1fr 1fr; gap:6px; }
+    .panel .grid .audio-choice { grid-column:1 / -1; }
     .panel button.opt {
       all: unset; display:flex; align-items:center; justify-content:center; gap:6px;
       padding:8px 6px; border-radius:9px; cursor:pointer; font-size:11.5px; font-weight:600;
@@ -55,6 +95,7 @@
       all: unset; box-sizing:border-box; min-width:0; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;
       padding:7px 6px; border-radius:9px; font-size:11.5px; font-weight:700; white-space:nowrap; overflow:hidden;
     }
+    .panel button.all-btn, .panel select { box-sizing:border-box; max-width:100%; }
     .panel .send button span { overflow:hidden; text-overflow:ellipsis; }
     .panel .send b { flex-shrink:0; font-size:9.5px; font-weight:800; line-height:1; padding:3px 4px; border-radius:4px; }
     .panel .send button.pr { background:#2a1248; color:#e3ccff; border:1px solid #7b3fe0; }
@@ -82,58 +123,195 @@
     .panel button.tgl.off { background: rgba(255,255,255,.06); color:#8892a8; border-color: rgba(255,255,255,.14); }
     .toast {
       position: fixed; z-index: 2147483647; left: 50%; bottom: 26px; transform: translateX(-50%);
-      display:none; max-width: min(440px, 88vw); padding:9px 14px; border-radius: 999px;
-      background: rgba(12,15,22,.96); color:#fff; font-size:12px; font-weight:600;
-      border:1px solid rgba(0,102,255,.5); box-shadow:0 10px 30px rgba(0,0,0,.55);
+      max-width: min(540px, 92vw); padding:11px 17px; border-radius: 999px;
+      background: #013fff; color:#fff; font-size:14px; font-weight:600;
+      box-shadow:0 10px 30px rgba(0,0,0,.55);
       backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      touch-action: none;                          /* em telas de toque o dedo arrasta a pilula, não rola a página */
+      /* transitions.dev "toast": surgir = rise + cross-blur + scale (abre no clock lento, fecha no rápido).
+         translate/scale são propriedades próprias — o transform do centro/arrasto não disputa com eles. */
+      opacity: 0; translate: 0 var(--toast-distance); scale: var(--toast-scale); filter: blur(var(--toast-blur));
+      visibility: hidden; pointer-events: none;
+      /* border-radius+padding na transição: cápsula ↔ card de jobs morfa, não corta seco */
+      transition: opacity var(--toast-close) var(--toast-ease), translate var(--toast-close) var(--toast-ease),
+                  scale var(--toast-close) var(--toast-ease), filter var(--toast-close) var(--toast-ease),
+                  border-radius var(--toast-close) var(--toast-ease), padding var(--toast-close) var(--toast-ease),
+                  visibility 0s linear var(--toast-close);
     }
-    .toast.err { border-color: rgba(239,68,68,.65); }
-    .toast.ok { border-color: rgba(16,185,129,.6); }
-    .fab:focus-visible, .panel button:focus-visible { outline: 2px solid #7fb0ff; outline-offset: 2px; }
+    .toast.is-open {
+      opacity: 1; translate: 0 0; scale: 1; filter: blur(0);
+      visibility: visible; pointer-events: auto;
+      transition: opacity var(--toast-open) var(--toast-ease), translate var(--toast-open) var(--toast-ease),
+                  scale var(--toast-open) var(--toast-ease), filter var(--toast-open) var(--toast-ease),
+                  border-radius var(--toast-open) var(--toast-ease), padding var(--toast-open) var(--toast-ease),
+                  visibility 0s linear 0s;
+    }
+    .toast.err { border-color: rgba(255,120,120,.95); }
+    .toast.ok { border-color: rgba(120,255,190,.8); }
+    .toast.jobs { cursor:grab; }
+    .toast .j-sum { display:flex; align-items:center; gap:9px; cursor:pointer; user-select:none;
+      margin:-5px -8px; padding:5px 8px; border-radius:10px; }
+    .toast .j-sum:hover { background: rgba(255,255,255,.14); }
+    .toast .j-caret { font-size:10px; opacity:.95; transition: transform var(--acc-chevron) var(--acc-ease); flex-shrink:0; line-height:1;
+      border:1px solid rgba(255,255,255,.6); border-radius:6px; padding:4px 6px; background:rgba(255,255,255,.1); }
+    .toast.spread .j-caret { transform: rotate(180deg); }
+    .toast .j-sumtxt { flex:1; min-width:0; display:flex; align-items:center; }
+    .toast .j-sumt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .toast .j-dot { flex-shrink:0; width:8px; height:8px; border-radius:50%; background:#ff404f;
+      margin-right:7px; animation:nvl-pulse 1.1s ease-in-out infinite; }
+    .toast .j-list { display:none; margin-top:9px; flex-direction:column; gap:8px; max-height:230px; overflow-y:auto; touch-action: pan-y;
+      transition: margin-top var(--stack-open) var(--stack-ease); }
+    .toast.open .j-list { display:flex; }
+    .toast .j-row { display:flex; align-items:center; gap:8px; font-size:13px;
+      background:#2a5cff; border:1px solid rgba(255,255,255,.18); border-radius:12px; padding:7px 10px;
+      filter:blur(0); transform-origin:50% 100%;
+      transition: transform var(--stack-open) var(--stack-ease), opacity var(--stack-open) var(--stack-ease), filter var(--stack-open) var(--stack-ease); }
+    .toast .j-cell { flex:1; min-width:0; }
+    .toast .j-name { font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .toast .j-stage { font-size:12px; opacity:.92; margin-top:1px; display:flex; align-items:center; gap:5px; }
+    .toast .j-live { display:inline-flex; align-items:center; gap:4px; flex-shrink:0; color:#ff404f;
+      font-weight:800; font-size:10.5px; letter-spacing:.4px; }
+    .toast .j-live i { width:7px; height:7px; border-radius:50%; background:#ff404f;
+      animation:nvl-pulse 1.1s ease-in-out infinite; }
+    @keyframes nvl-pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.35; transform:scale(.65); } }
+    .toast .j-dots { display:inline-flex; gap:3px; align-items:center; margin-left:2px; }
+    .toast .j-dots i { width:4px; height:4px; border-radius:50%; background:#fff; opacity:.25; animation:nvdots 1.2s ease-in-out infinite; }
+    .toast .j-dots i:nth-child(2) { animation-delay:.18s; }
+    .toast .j-dots i:nth-child(3) { animation-delay:.36s; }
+    @keyframes nvdots { 0%,60%,100% { opacity:.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-2px); } }
+    .toast .j-bar { height:4px; margin-top:5px; background:rgba(255,255,255,.28); border-radius:4px; overflow:hidden; }
+    .toast .j-bar i { display:block; height:100%; width:0; background:#fff; transition:width .4s ease; }
+    .toast .j-x { all:unset; cursor:pointer; flex-shrink:0; font-size:13px; font-weight:800; line-height:1;
+      padding:4px 8px; border-radius:7px; color:#fff; }
+    .toast .j-x:hover { background:rgba(255,255,255,.22); }
+    .toast .j-stop { all:unset; cursor:pointer; flex-shrink:0; font-size:12px; font-weight:800; line-height:1;
+      padding:7px 10px; border-radius:7px; background:#fff; color:#c01818; white-space:nowrap; }
+    .toast .j-stop:hover { background:rgba(255,255,255,.82); }
+    .toast .j-note { font-size:12.5px; opacity:1; margin-top:8px; display:none; }
 
-html,body{margin:0;background:#11141e;color:white;font:12px 'Segoe UI',sans-serif}body{padding:16px}.sample{height:440px;position:relative;background:linear-gradient(150deg,#10244a,#514d65 55%,#b79b7f);overflow:hidden;border-radius:8px}.shape{position:absolute;width:210px;height:210px;border:35px solid #c5b8a6;transform:rotate(28deg);top:80px;right:60px;box-shadow:35px 30px 0 #1f3046}.cap{position:absolute;bottom:16px;left:20px;font-size:11px}.demo-fab{position:absolute;left:18px;top:18px;width:42px;height:42px;display:grid;place-items:center;border:1px solid #3775ff;background:#071025db;border-radius:12px;cursor:pointer;z-index:3}.demo-fab svg{width:25px;height:25px}.panel{display:block;position:absolute;left:18px;top:65px;z-index:4;width:268px}.demo-status{font-size:11px;min-height:34px;padding-top:10px;color:#bbcdf6}.demo-label{font-size:10px;color:#a4aec8;margin-bottom:10px}.demo-status b{color:#9de087}
-body{padding:0;background:#e7e8f0;color:#15153f}.browser-frame{border:1px solid #cfd1de;border-radius:9px;overflow:hidden;background:#fff}.tab-strip{height:33px;display:flex;align-items:center;gap:12px;padding:0 11px;background:#dce0e9;color:#505569;font-size:10px}.browser-dot{width:11px;height:11px;border-radius:50%;background:#1587b3;box-shadow:inset -3px -3px #42b8a7}.browser-tab{background:#f5f6fa;padding:9px 13px 8px;border-radius:8px 8px 0 0;display:flex;justify-content:space-between;gap:25px;align-self:end}.addressbar{display:flex;align-items:center;gap:10px;background:#f5f6fa;padding:9px 11px;color:#6a6f82;font-size:11px}.addressbar>div{background:white;border:1px solid #e0e2ea;border-radius:16px;flex:1;min-width:0;padding:5px 10px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.webpage{padding:17px;background:white}.sitehead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:8px;letter-spacing:.5px;border-bottom:1px solid #e5e6ed;padding-bottom:13px;color:#656b7e}.sitehead b{color:#15153f;font-size:9px}.webpage h1{font-size:23px;line-height:1.13;letter-spacing:-.7px;margin:15px 0 8px;color:#15153f}.page-description{font-size:10px;color:#757b8c;margin:0 0 15px}.sample{height:570px;border-radius:3px}.panel{left:13px;top:68px}.demo-fab{left:13px;top:15px}.button-caption{position:absolute;top:29px;left:65px;font-size:10px;color:#e5edff;text-shadow:0 1px 4px #12182b;z-index:2}.video-controls{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:10px;height:37px;padding:10px 12px 5px;background:linear-gradient(transparent,#070d21e8);font-size:10px;color:white;z-index:2}.seekbar{position:absolute;top:0;left:12px;right:12px;height:3px;background:#ffffff55}.seekbar i{display:block;background:#f0f2ff;width:35%;height:3px}.seekbar b{position:absolute;left:35%;top:-2px;width:7px;height:7px;border-radius:50%;background:white}.player-right{margin-left:auto}.cap{bottom:47px;font-size:9px;left:12px;color:#fff;text-shadow:0 1px 5px #000}.video-meta{display:flex;justify-content:space-between;gap:10px;font-size:9px;padding-top:11px;color:#6c7384}.video-meta b{color:#15153f;font-weight:600}.demo-status{padding:12px 8px 0;font-size:10px;color:#626b80;line-height:1.5;min-height:45px}.demo-status b{color:#013fff}
-@media(max-width:360px){.webpage{padding:10px}.sitehead span{display:none}.sample{height:578px}.button-caption{font-size:8px;left:61px}.panel{left:8px}.demo-fab{left:8px}.addressbar{gap:6px;padding-left:8px}.video-meta{font-size:8px}}
-/* Menu na ilustração estreita */@media(max-width:360px){.sample .panel{width:calc(100% - 16px)}}
-</style><body><div class="browser-frame"><div class="tab-strip"><span class="browser-dot"></span><span class="browser-tab">Página de referência <span>×</span></span><span>＋</span></div><div class="addressbar"><span>‹　›　↻</span><div>♧　pagina.exemplo/referencias/video</div><span>···</span></div><div class="webpage"><div class="sitehead"><b>PÁGINA DE REFERÊNCIA</b><span>VÍDEOS　 /　 INSPIRAÇÃO</span></div><h1>Estudo de movimento<br>e composição.</h1><p class="page-description">Uma referência encontrada durante a pesquisa.</p><div class="sample"><div class="shape"></div><span class="cap">Estudo de movimento · quadro ilustrativo</span><div class="video-controls" aria-label="Controles ilustrativos do player"><div class="seekbar"><i></i><b></b></div><span>▶</span><span>01:12 / 03:24</span><span class="player-right">◖))　⚙　⛶</span></div><span class="button-caption">← Botão do Downloader sobre o vídeo</span><button class="demo-fab" aria-label="Abrir ou fechar o menu do Downloader" aria-expanded="true"><svg viewBox="0 0 722.36 722.36" width="20" height="20" aria-hidden="true">
-    <rect fill="#0066FF" width="722.36" height="722.36" rx="102.3" ry="102.3"/>
-    <path fill="#FFFFFF" d="M550.64,561.37H168.59c-4.19,0-7.59-3.4-7.59-7.59V171.73l389.63,389.63ZM553.77,161H171.72l389.63,389.63V168.58c0-4.17-3.39-7.59-7.59-7.59Z"/>
-  </svg></button><div class="panel">
+    /* O fundo da frente pertence ao mesmo elemento desde o primeiro aviso. */
+    .toast, .toast.jobs {
+      box-sizing:border-box; width:min(460px, calc(100vw - 24px)); min-width:0;
+      height:64px; padding:0 24px; border:0; border-radius:999px; background:#013fff;
+      display:flex; align-items:center; gap:8px; overflow:visible;
+    }
+    .toast.jobs { padding:0; isolation:isolate; }
+    .toast.refresh { width:fit-content; max-width:min(640px, calc(100vw - 24px)); height:auto;
+      min-height:64px; padding:14px 26px; white-space:normal; }
+    .toast.refresh .toast-message { max-width:100%; }
+    .toast.refresh .toast-message-text { white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+    .toast.jobs .j-row.retiring { pointer-events:none; animation:nvl-card-out var(--stack-close) var(--stack-ease) both; }
+    @keyframes nvl-card-out { to { scale:.88; opacity:0; } }
+    .toast:not(.jobs), .toast.jobs .j-note.on { justify-content:center; text-align:center; }
+    .toast-message { position:relative; display:block; min-width:0; max-width:calc(100% - 44px);
+      animation:nvl-content-in var(--stack-open) var(--stack-ease); }
+    .toast-message-text { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:20px; }
+    .toast-message .t-check { position:absolute; right:100%; top:2.5px; margin-right:6px; }
+    .toast .j-txt { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    @media(prefers-reduced-motion:reduce) { .toast-message { animation:none; } }
+    .toast.jobs .j-list { display:contents; }
+    .toast.jobs .j-row {
+      position:absolute; inset:0; box-sizing:border-box; height:100%; padding:8px 24px;
+      background:#013fff; border:0; border-radius:999px; overflow:hidden; color:white;
+      transition:transform var(--stack-open) var(--stack-ease),opacity var(--stack-close) var(--stack-ease);
+    }
+    .toast.jobs .j-row[data-depth="0"] { z-index:2; }
+    .toast.jobs .j-row:not([data-depth="0"]) { opacity:0; pointer-events:none; transform:scale(.97); }
+    .toast.jobs.spread .j-row:not([data-depth="0"]) {
+      opacity:1; pointer-events:auto; transform:translateY(calc(var(--layer) * (-100% - var(--stack-spread-gap))));
+    }
+    .toast.jobs .j-row { display:grid; grid-template-columns:minmax(0,1fr) auto 28px;
+      column-gap:10px; padding-inline:24px 16px; }
+    .toast.jobs .j-cell { grid-column:1; grid-row:1; }
+    .toast.jobs .j-stop { grid-column:2; grid-row:1; }
+    .toast.jobs .j-x:not(.j-stop), .toast.jobs .j-sum { grid-column:3; grid-row:1; }
+    .toast.jobs:has([data-depth="1"]) [data-depth="0"] .j-x:not(.j-stop) { grid-column:2; }
+    .toast.jobs .j-sum:focus-visible { outline:0; }
+    .toast.jobs .j-sum:focus-visible .j-caret { filter:drop-shadow(0 1px 2px #001847); }
+    .toast.jobs .j-name { line-height:16px; }
+    .toast.jobs .j-stage { line-height:15px; margin-top:2px; opacity:1; }
+    .toast.jobs .j-bar { height:4px; margin-top:7px; }
+    .toast.jobs .j-sum { flex:0 0 28px; box-sizing:border-box; height:28px; margin:0; padding:0;
+      justify-content:center; background:transparent; }
+    .toast.jobs:has(.j-row[data-depth="1"]) .j-row[data-depth="0"] { padding-right:16px; }
+    .toast.jobs .j-x:not(.j-stop) { box-sizing:border-box; width:28px; padding-inline:0; text-align:center; }
+    .toast.jobs .j-caret { display:block; width:15px; height:15px; border:0; background:none; padding:0; }
+    .toast.jobs .j-sumtxt { display:none; }
+    .toast.jobs .j-stop { border-radius:999px; padding:7px 10px; }
+    .toast.jobs .j-note.on { position:absolute; inset:0; z-index:5; box-sizing:border-box; margin:0;
+      padding:0 16px; border-radius:inherit; background:#013fff; pointer-events:auto; }
+    @keyframes nvl-content-in { from {opacity:0; translate:0 4px} to {opacity:1; translate:0 0} }
+    .toast.jobs .j-row.is-enter .j-cell, .toast.jobs .j-note.on { animation:nvl-content-in var(--stack-open) var(--stack-ease); }
+    @media(prefers-reduced-motion:reduce) { .toast.jobs * { animation:none!important; transition:none!important; } }
+
+    /* ---- transitions.dev "shimmer text": AO VIVO e "parando e salvando" vivos sem spinner ---- */
+    .j-shim { position: relative; display: inline-block; color: var(--shimmer-base); }
+    .j-shim::before {
+      content: attr(data-text); position: absolute; inset: 0; pointer-events: none;
+      background-image: linear-gradient(90deg, transparent 0%, transparent 40%, var(--shimmer-highlight) 50%, transparent 60%, transparent 100%);
+      background-size: var(--shimmer-band) 100%; background-repeat: no-repeat;
+      background-clip: text; -webkit-background-clip: text;
+      color: transparent; -webkit-text-fill-color: transparent;
+      animation: nv-shim var(--shimmer-dur) var(--shimmer-ease) infinite;
+    }
+    .j-live .j-shim { --shimmer-base: #ff404f; }
+    @keyframes nv-shim { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+    /* ---- transitions.dev "success check": o ✓ aparece desenhando quando o download fecha ---- */
+    .t-check { display:inline-block; margin-right:7px; color:#7dffb0; opacity:0; transform-origin:center; vertical-align:-2px; }
+    .t-check svg { display:block; overflow:visible; width:15px; height:15px; }
+    .t-check svg path { stroke-dasharray:43; stroke-dashoffset:43; }
+    .t-check[data-state="in"] { animation: nv-cf var(--check-dur) var(--check-ease-out) forwards, nv-cr var(--check-dur) var(--check-ease-out) forwards, nv-cb var(--check-dur) var(--check-ease-bob) forwards, nv-cbl var(--check-dur) var(--check-ease-out) forwards; }
+    .t-check[data-state="in"] svg path { animation: nv-cd var(--check-dur) var(--check-ease-out) var(--check-path-delay) forwards; }
+    @keyframes nv-cf { from { opacity:0; } to { opacity:1; } }
+    @keyframes nv-cr { from { transform:rotate(var(--check-rotate-from)); } to { transform:rotate(0); } }
+    @keyframes nv-cb { from { translate:0 var(--check-y-amount); } to { translate:0 0; } }
+    @keyframes nv-cbl { from { filter:blur(var(--check-blur-from)); } to { filter:blur(0); } }
+    @keyframes nv-cd { to { stroke-dashoffset:0; } }
+
+    /* ---- transitions.dev "error shake": o tremor roda via WAAPI (el.animate) — o className
+       é reconstruído a cada poll e uma classe truncaria a animação no meio ---- */
+
+    @media (prefers-reduced-motion: reduce) {
+      .toast, .toast.is-open, .panel, .panel.is-open, .fab, .toast .j-row, .toast .j-caret, .toast .j-bar i { transition: none !important; }
+      .t-check, .t-check svg path, .j-shim::before, .j-dot, .j-live i, .j-dots i { animation: none !important; }
+      .t-check { opacity: 1; } .t-check svg path { stroke-dashoffset: 0; }
+      .j-live i, .j-dots i { opacity: 1; }
+    }
+    .toast .j-note.on { display:flex; align-items:center; }
+    .fab:focus-visible, .panel button:focus-visible { outline: 2px solid #7fb0ff; outline-offset: 2px; }
+  body{margin:0;background:#10131b;font-family:Segoe UI,Arial,sans-serif}.panel{position:relative!important;left:auto!important;top:auto!important;margin:20px auto;max-height:none;visibility:visible;opacity:1;scale:1}.panel button{cursor:default}</style><body><div class="panel is-open" id="download-panel" role="dialog" aria-label="Noe VFX Downloader" style="left: 56px; top: 30px;">
       <div class="head">
         <svg viewBox="0 0 722.36 722.36" width="20" height="20" aria-hidden="true">
-    <rect fill="#0066FF" width="722.36" height="722.36" rx="102.3" ry="102.3"/>
-    <path fill="#FFFFFF" d="M550.64,561.37H168.59c-4.19,0-7.59-3.4-7.59-7.59V171.73l389.63,389.63ZM553.77,161H171.72l389.63,389.63V168.58c0-4.17-3.39-7.59-7.59-7.59Z"/>
+    <rect fill="#0066FF" width="722.36" height="722.36" rx="102.3" ry="102.3"></rect>
+    <path fill="#FFFFFF" d="M550.64,561.37H168.59c-4.19,0-7.59-3.4-7.59-7.59V171.73l389.63,389.63ZM553.77,161H171.72l389.63,389.63V168.58c0-4.17-3.39-7.59-7.59-7.59Z"></path>
   </svg>
         <b>Salvar vídeo</b>
         <span class="brand">NOÉ VFX</span>
+        <button type="button" class="x" data-x="" aria-label="Cancelar" title="Cancelar">✕</button>
       </div>
       <div class="dest">
         <span>📁</span>
-        <span class="path" title="Videos/NoeVFX">Videos/NoeVFX</span>
+        <span class="path" title="D:/Downloads">Downloads</span>
         <button type="button" class="change">trocar</button>
       </div>
-
-
-
-
-
-
-
-
-
-
-
-      <label style="display:block;font-size:11px;color:#a4afc4;margin-bottom:8px">Qualidade do vídeo<select data-quality style="display:block;width:100%;padding:8px;margin-top:5px;border:1px solid #303747;border-radius:7px;background:#1b1f29;color:#f1f4fa;font:inherit"><option value="best">Nativa · Máxima disponível</option><option value="1080">1080p · Full HD</option><option value="720">720p · HD</option></select></label>
-      <div class="grid"><button type="button" class="opt main" data-q="selected">Baixar na pasta padrão</button><button type="button" class="opt audio-choice" style="grid-column:1 / -1" data-audio>Escolher formato de áudio…</button></div>
+      <label style="display:block;font-size:11px;color:#a4afc4;margin-bottom:8px">Qualidade do vídeo<select data-quality="" style="display:block;width:100%;margin-top:5px;padding:8px;border:1px solid #303747;border-radius:7px;background:#1b1f29;color:#f1f4fa;font:inherit"><option value="best">Nativa · Máxima disponível</option><option value="1080">1080p · Full HD</option><option value="720">720p · HD</option></select></label>
+      <div class="grid">
+        <button type="button" class="opt main" data-q="selected">
+          Baixar na pasta padrão
+        </button>
+        <button type="button" class="opt audio-choice" data-audio="">Escolher formato de áudio…</button>
+      </div>
       <div class="send-h">Enviar para o projeto</div><div class="send">
         <button type="button" class="pr" data-target="premiere" title="Salva na pasta _Noe VFX Downloader do projeto aberto no programa (um nível acima da pasta Premiere/AE), já em H.264. O programa precisa estar aberto com o projeto salvo."><b>Pr</b><span>Premiere</span></button>
         <button type="button" class="ae" data-target="aftereffects" title="Salva na pasta _Noe VFX Downloader do projeto aberto no programa (um nível acima da pasta Premiere/AE), já em H.264. O programa precisa estar aberto com o projeto salvo."><b>Ae</b><span>After Effects</span></button>
       </div>
-      <div class="all"><button type="button" class="all-btn" data-playlist-demo>Ver playlist deste vídeo…</button></div><div class="all"><button type="button" class="all-btn">Escolher vídeos desta página…</button></div>
-      <label class="compat" title="Salva MP4 com vídeo H.264 e áudio AAC, que abrem no Premiere e em outros editores. Se o vídeo só existir em AV1/VP9, é convertido depois do download."><input type="checkbox" data-compat ><span>Converter para H.264 (Premiere)</span></label>
+
+      <div class="all"><button type="button" class="page-btn all-btn">Escolher vídeos desta página…</button></div>
+      <label class="compat" title="Salva MP4 com vídeo H.264 e áudio AAC, que abrem no Premiere e em outros editores. Se o vídeo só existir em AV1/VP9, é convertido depois do download."><input type="checkbox" data-compat=""><span>Converter para H.264 (Premiere)</span></label>
       <div class="foot">
         <span class="hint">Arraste o ícone para mover</span>
-        <button type="button" class="tgl " data-toggle>ÍCONE ON</button>
+        <button type="button" class="tgl " data-toggle="">ÍCONE ON</button>
       </div>
-    </div></div><div class="video-meta"><b>Referência de movimento</b><span>Player incorporado na página web</span></div></div></div><div class="demo-status" role="status">Experimente o botão azul, a qualidade e os destinos Adobe.</div><script src="video-demo.js"></script><script src="demo-size.js"></script></body></html>
+    </div><script src="demo-size.js"></script></body></html>

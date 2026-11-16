@@ -25,7 +25,7 @@
   font-weight: 500;
   background: rgba(0, 102, 255, 0.14);
   color: #f1f1f1;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out), border-color var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out), color var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out);
 }
 
 html:not([dark]) .noevfx-dl-btn {
@@ -103,6 +103,7 @@ html:not([dark]) .noevfx-dl-dest {
   font-family: "Roboto", "Segoe UI", sans-serif;
   font-size: 13px;
   cursor: pointer;
+  transition: background var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out);
 }
 
 html:not([dark]) .noevfx-dl-menu button {
@@ -111,4 +112,8 @@ html:not([dark]) .noevfx-dl-menu button {
 
 .noevfx-dl-menu button:hover {
   background: rgba(0, 102, 255, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .noevfx-dl-btn, .noevfx-dl-menu button { transition: none !important; }
 }

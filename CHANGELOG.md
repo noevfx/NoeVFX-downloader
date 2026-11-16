@@ -6,6 +6,27 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [3.2.2] — 2026-11-16
+
+- Pílulas azuis por download, pilha aberta por clique, botões alinhados e confirmação individual de salvar/cancelar, com saída animada.
+- FAB no feed do YouTube começa à esquerda da miniatura, com arrasto e posição próprios; menu usa a geometria estável do botão.
+- Aviso de recarga com dimensão própria e texto completo; reposicionamento após medir o aviso e ao redimensionar a janela.
+- Documentação e capturas com três lives, cinco itens (três ativos e dois na fila) e fila mista. Limite compartilhado de três tarefas, já existente no servidor, agora explicado em todos os guias.
+
+
+- LinkedIn DASH: reconhece o endereço do manifesto mesmo sem `.mpd` e normaliza os segmentos MP4 identificados como `video/iso.segment`, sem desativar a proteção de extensões do motor. Vale também para o stream alternativo do post.
+- Troca de vídeo no feed: descarta fontes antigas de players reaproveitados; listas ao vivo, protegidas ou com intervalos não suportados não são tratadas como um arquivo completo.
+- LinkedIn: o botão sobre o vídeo identifica o próprio post no feed, inclusive com player `blob:`, sem usar o endereço genérico do feed ou um vídeo vizinho.
+- A mídia alternativa fica associada ao player/post correto; o popup usa o vídeo ativo quando a identificação é única e pede uma escolha quando há ambiguidade.
+- Pedidos contendo somente o endereço do feed são recusados antes de criar a pasta de download, com orientação específica.
+- Testes de identificação, seleção pelo popup, feed com vários players e download real pelo servidor.
+- Feed SDUI do LinkedIn: lê a lista completa de reprodução do próprio Video.js quando não há link de post nem manifesto HTTP. Reconstrói o arquivo inteiro pelo motor existente, com validação do CDN, separação por asset, preservação de áudio e bloqueio de fontes protegidas. Não baixa um segmento isolado como se fosse o vídeo.
+- Botão sobre o vídeo nunca baixa o vídeo errado: no feed do YouTube (e de outros sites com player genérico) o endereço enviado é o do card clicado; se não houver como identificar o vídeo, o pedido é recusado com aviso em vez de enviar a página — o servidor também recusa endereços de feed/listagem conhecidos antes de criar qualquer pasta.
+- Clicar em outro vídeo enquanto um download está ativo cria um segundo download de verdade (o servidor deduplica e enfileira); o clique deixou de ser engolido em silêncio.
+- Notificação sobre o vídeo vira um mini centro de downloads: azul com texto branco, ~15% maior, mostra a etapa real (na fila → baixando % → unindo → convertendo → concluído), contador de ativos/fila e, ao clicar, a lista dos downloads do navegador com cancelar por item.
+- Popup lista os downloads do navegador em andamento (inclusive os iniciados pelo botão sobre o vídeo), com etapa, barra e cancelar — não apenas o que o próprio popup mandou baixar.
+- Nomes de arquivo compatíveis: acentos viram letras simples ("Maceió"→"Maceio"), emoji e símbolos problemáticos saem; vale para YouTube, Pinterest, importações Adobe e demais fontes.
+
 ## [3.2.1] — 2026-11-14
 
 - Endereços oficiais alinhados ao repositório **NoeVFX-downloader**, incluindo GitHub Pages, manuais, instaladores e notas.

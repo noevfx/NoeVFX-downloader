@@ -11,7 +11,7 @@ def main():
     version = json.loads((ROOT / "browser/manifest.json").read_text(encoding="utf-8"))["version"]
     if os.environ.get("GITHUB_REF_TYPE") == "tag" and os.environ.get("GITHUB_REF_NAME") != "v" + version:
         raise SystemExit("A tag não corresponde à versão do manifest.")
-    title = "Noe VFX Downloader %s — Vídeos, playlists e áudio" % version
+    title = "Noe VFX Downloader %s — Lives simultâneas e fila de downloads" % version
     base = "https://github.com/noevfx/NoeVFX-downloader/releases/download/v%s/" % version
     rows, hashes = [], []
     for edition in ("basic", "editors"):
@@ -33,6 +33,14 @@ def main():
 %s
 
 Selecione uma playlist inteira ou só alguns itens. Escolha vídeo ou áudio, confira o formato e confirme. No for Editors, referências do navegador e links do roteiro podem seguir direto ao projeto Adobe aberto.
+
+### Novidades da 3.2.2
+
+- Grave até três lives simultâneas ou combine lives e vídeos comuns. O limite global é de três tarefas ativas; os demais itens aguardam.
+- No feed do YouTube, inicie pela miniatura quando ela identifica a transmissão. Outros sites podem exigir dar play para detectar a fonte.
+- Abra a pilha de pílulas por clique e acompanhe cada etapa. Parar e salvar, cancelamento e confirmação ficam no próprio card.
+- FAB reposicionado no feed, arrasto independente do player, aviso de atualização com texto completo e melhorias na detecção do LinkedIn.
+- README, manuais e capturas atualizados para a 3.2.2.
 
 ### Instalar ou migrar
 

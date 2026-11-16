@@ -629,6 +629,116 @@ class SiteRulesCase(unittest.TestCase):
         self.assertIn("generic", c)
         self.assertNotIn("--use-extractors", self.cmd("https://www.youtube.com/watch?v=abc"))
 
+    def test_linkedin_feed_sem_post_rejeitado_antes_de_criar_pasta(self):
+        for url in ("https://www.linkedin.com/feed/", "https://www.linkedin.com/feed?x=1", "https://linkedin.com/"):
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, "endereço do feed"):
+                self.m.prepare_download({"url": url})
+
+    def test_linkedin_post_e_midia_continuam_aceitos(self):
+        for url in ("https://www.linkedin.com/feed/update/urn:li:activity:7521645972955852801/", "https://www.linkedin.com/posts/user_test-7521645937023225856-EwUX/", "https://dms.licdn.com/playlist/vid/v2/ASSET/mp4-720p/0/123"):
+            with self.subTest(url=url):
+                self.assertEqual(self.m.prepare_download({"url": url})["url"], url)
+
+    def test_feed_generico_rejeitado_em_todos_os_sites(self):
+        feeds = ("https://www.youtube.com/", "https://www.youtube.com/feed/trending", "https://www.youtube.com/results?q=x",
+                 "https://www.youtube.com/@canal", "https://youtu.be/", "https://www.tiktok.com/", "https://www.tiktok.com/foryou",
+                 "https://www.instagram.com/", "https://www.instagram.com/explore/", "https://www.instagram.com/reels/",
+                 "https://x.com/", "https://x.com/home", "https://twitter.com/explore", "https://www.facebook.com/",
+                 "https://www.facebook.com/watch/", "https://www.pinterest.com/", "https://www.pinterest.com/ideas/",
+                 "https://vimeo.com/", "https://vimeo.com/categories", "https://www.dailymotion.com/",
+                 "https://www.dailymotion.com/br", "https://www.twitch.tv/", "https://www.twitch.tv/directory",
+                 "https://www.twitch.tv/canal/videos",
+                 "https://g1.globo.com/", "https://g1.globo.com/politica/", "https://ge.globo.com/futebol/",
+                 "https://globoplay.globo.com/")
+        for url in feeds:
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, "endereço do feed"):
+                self.m.prepare_download({"url": url})
+
+    def test_videos_especificos_continuam_aceitos_nos_sites_com_guarda(self):
+        ok = ("https://www.youtube.com/watch?v=abcDEF12345", "https://www.youtube.com/shorts/abcDEF12345",
+              "https://youtu.be/abcDEF12345", "https://www.tiktok.com/@user/video/7000000000000000000",
+              "https://www.instagram.com/reel/AbC123/", "https://x.com/user/status/1700000000000000000",
+              "https://www.facebook.com/user/videos/123456789/", "https://www.pinterest.com/pin/123456789/",
+              "https://vimeo.com/12345678", "https://www.dailymotion.com/video/x8abcde", "https://www.twitch.tv/canal",
+              "https://g1.globo.com/politica/noticia/2026/11/15/materia-x.ghtml", "https://globoplay.globo.com/v/1234567/")
+        for url in ok:
+            with self.subTest(url=url):
+                self.assertEqual(self.m.prepare_download({"url": url})["url"], url)
+
+    def test_safe_filename_sem_acentos_emoji_nem_chars_incompativeis(self):
+        sf = self.m.safe_filename
+        self.assertEqual(sf("Maceió rua FECHADA 🚧 | como está [abc123].mp4"), "Maceio rua FECHADA como esta [abc123].mp4")
+        self.assertEqual(sf("vídeo çãõ ñandú 🔥🎬.mkv"), "video cao nandu.mkv")
+        self.assertEqual(sf('nome<com>"barra|pipe*?.mp4'), "nome com barra pipe.mp4")
+        self.assertEqual(sf("   ...   "), "video")
+        self.assertEqual(sf("já limpo (1).mp4"), "ja limpo (1).mp4")
+        for out in (sf("🔥🔥🔥.mp4"), sf("a/b\\c:d.mp4")):
+            self.assertNotRegex(out, r'[^\x20-\x7e]')
+            self.assertNotRegex(out, r'[<>:"/\\|?*]')
+
+    def linkedin_fixture(self):
+        base = "https://dms.licdn.com/playlist/vid/v2/ASSET1/hls-720p-high-bitrate-quality-analysis/FORMAT1/"
+        return {"playlists": [{"attributes": {"RESOLUTION": {"width": 1280, "height": 720}, "CODECS": "avc1.64001f,mp4a.40.2"},
+                 "segments": [{"uri": base + "2/123", "duration": 4, "map": {"uri": base + "1/123"}},
+                              {"uri": base + "3/123", "duration": 2, "map": {"uri": base + "1/123"}}]}]}
+
+    def linkedin_dash_fixture(self):
+        base = "https://dms.licdn.com/playlist/vid/v2/ASSET1/hls-720p/FORMAT1/"
+        return ('<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"><Period><AdaptationSet>'
+                '<Representation width="1280" height="720" codecs="avc1.64001f,mp4a.40.2" mimeType="video/iso.segment">'
+                '<SegmentList duration="4000" timescale="1000"><Initialization sourceURL="' + base + '1/123"/>'
+                '<SegmentURL media="' + base + '2/123"/><SegmentURL media="' + base + '3/123"/>'
+                '</SegmentList></Representation></AdaptationSet></Period></MPD>').encode()
+
+    def test_linkedin_dash_iso_segment_vira_mp4_com_todos_os_fragmentos(self):
+        info = self.m.linkedin_dash_info(self.linkedin_dash_fixture(), "ASSET1")
+        fmt = info["formats"][0]
+        self.assertEqual(fmt["ext"], "mp4")
+        self.assertEqual(len(fmt["fragments"]), 3)
+        self.assertEqual(fmt["fragments"][1]["duration"], 4)
+        self.assertEqual(fmt["height"], 720)
+        self.assertNotIn("duration", info)
+
+    def test_linkedin_dash_rejeita_asset_drm_live_xml_e_urls_externas(self):
+        xml = self.linkedin_dash_fixture()
+        for data, asset in ((xml, "OTHER"), (xml.replace(b'<AdaptationSet>', b'<AdaptationSet><ContentProtection/>'), "ASSET1"),
+                            (xml.replace(b'static', b'dynamic'), "ASSET1"), (b'<!DOCTYPE MPD>' + xml, "ASSET1"),
+                            (xml.replace(b'https://dms.licdn.com', b'http://127.0.0.1'), "ASSET1")):
+            with self.subTest(asset=asset, xml=data[:60]), self.assertRaises(ValueError):
+                self.m.linkedin_dash_info(data, asset)
+
+    def test_linkedin_dash_so_aceita_url_exata_do_cdn(self):
+        path = '/playlist/vid/dash/ASSET1/MANIFEST1'
+        self.assertEqual(self.m.linkedin_dash_asset('https://dms.licdn.com' + path + '?e=1'), 'ASSET1')
+        for host in ('http://dms.licdn.com', 'https://dms.licdn.com.evil.test', 'https://user@dms.licdn.com', 'https://127.0.0.1'):
+            self.assertFalse(self.m.linkedin_dash_asset(host + path))
+
+    def test_linkedin_player_preserva_todos_os_trechos_e_inicializacao(self):
+        data = self.m.linkedin_player_info(self.linkedin_fixture(), "Vídeo do feed")
+        self.assertEqual(data["id"], "ASSET1")
+        self.assertEqual(data["duration"], 6)
+        self.assertEqual(len(data["formats"][0]["fragments"]), 3)
+        self.assertEqual(data["formats"][0]["protocol"], "http_dash_segments")
+        self.assertEqual(data["formats"][0]["acodec"], "mp4a.40.2")
+
+    def test_linkedin_player_recusa_destinos_externos_e_locais(self):
+        for url in ("http://127.0.0.1/secret", "file:///etc/passwd", "https://evil.test/video", "https://dms.licdn.com:123/playlist/vid/v2/ASSET1/hls-720p/FORMAT1/2/123"):
+            data = self.linkedin_fixture()
+            data["playlists"][0]["segments"][0]["uri"] = url
+            with self.subTest(url=url), self.assertRaises(ValueError): self.m.linkedin_player_info(data)
+
+    def test_linkedin_player_recusa_drm_e_mistura_de_assets(self):
+        for key in ("key", "asset"):
+            data = self.linkedin_fixture()
+            s = data["playlists"][0]["segments"][0]
+            if key == "key": s["key"] = {"method": "AES-128"}
+            else: s["uri"] = s["uri"].replace("ASSET1", "OTHER")
+            with self.subTest(key=key), self.assertRaises(ValueError): self.m.linkedin_player_info(data)
+
+    def test_linkedin_player_passa_pelo_preparo_do_download(self):
+        req = self.m.prepare_download({"url": "https://dms.licdn.com/playlist/vid/v2/ASSET1/hls-720p/FORMAT1/2/123", "linkedinManifest": self.linkedin_fixture()})
+        self.assertIn("linkedin_info", req)
+
 
 if __name__ == "__main__":
     unittest.main()

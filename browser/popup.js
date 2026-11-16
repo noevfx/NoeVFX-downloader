@@ -1,5 +1,5 @@
 /* ============================================================================
-   Noe VFX Downloader — Popup v3.2.1 (i18n pt/en)
+   Noe VFX Downloader — Popup v3.2.2 (i18n pt/en)
    ========================================================================== */
 "use strict";
 
@@ -293,6 +293,100 @@ async function refreshStreams(showSpinner) {
 }
 
 /* -------------------------------------------------------------- downloads - */
+/* Downloads do navegador em andamento — inclusive os iniciados pelo botão sobre o vídeo ou por outra aba
+   (antes o popup só enxergava o que ELE mesmo tinha mandado baixar). */
+const jobsWrap = $("jobsWrap"), jobsEl = $("jobs");
+const ACTIVE_J = new Set(["queued", "downloading", "merging", "stopping"]);
+const jobRows = new Map();
+const pendingStop = new Set();                 // ids com cancel clicado aguardando o servidor confirmar "stopping"
+
+function jobStage(j) {
+  if (j.status === "queued") return t("queuedWait");
+  if (j.status === "merging") return t("mergingShort");
+  if (j.status === "stopping") return j.live ? t("stoppingSave") : t("canceling");
+  if (j.live && j.status === "downloading") {
+    const s = Math.max(0, Math.round(Date.now() / 1000 - (j.started || Date.now() / 1000)));
+    return t("recordingFor", s >= 60 ? `${Math.floor(s / 60)}min ${String(s % 60).padStart(2, "0")}s` : `${s}s`);
+  }
+  const p = String(j.progress || "");
+  if (/^\d+(\.\d+)?%$/.test(p)) return t("downloadingP", p + (j.speed ? " • " + j.speed : ""));
+  return p || t("downloading0");                        // "convertendo para H.264", "unindo"... vem pronto do servidor
+}
+function jobName(j) {
+  const ttl = String(j.title || "").replace(/^\(\d+\)\s*/, "").trim();
+  return (ttl || hostOf(j.url || "") || "download").slice(0, 70);
+}
+
+async function pollJobs() {
+  let r;
+  try { r = await send({ type: "JOBS" }); } catch (_) { r = null; }
+  const list = (r && r.ok && r.data && Array.isArray(r.data.jobs) ? r.data.jobs : [])
+    .filter((j) => ACTIVE_J.has(j.status) && !j.import_app && !j.batch)
+    .sort((a, b) => (a.created || 0) - (b.created || 0));
+  jobsWrap.hidden = !list.length;
+  if (!list.length) { jobRows.forEach((row) => row.remove()); jobRows.clear(); pendingStop.clear(); return; }
+  const seen = new Set();
+  list.forEach((j) => {
+    seen.add(j.id);
+    if (pendingStop.has(j.id)) j.status = "stopping";     // cancel já clicado: não deixa o poll reverter a tela
+    let row = jobRows.get(j.id);
+    if (!row) {
+      row = document.createElement("div");
+      row.className = "stream-item job-item";
+      // slots persistentes dentro de .j-stage: shimmer/pulse/dots são CSS-animation — nó criado 1x não reinicia a cada paint
+      row.innerHTML = `<div class="stream-meta"><div class="stream-name"></div><div class="stream-sub"><span class="j-stage"><span class="j-live" style="display:none"><i></i><span class="j-shim"></span></span><span class="j-txt"></span><span class="j-dots" style="display:none"><i></i><i></i><i></i></span></span></div><div class="j-bar"><i></i></div></div><button type="button" class="stream-btn j-x">✕</button>`;
+      row.querySelector(".j-x").addEventListener("click", (e) => {
+        if (!e.isTrusted) return;                     // mesmo padrão da pilula: sintético nunca cancela
+        const prev = j.status;
+        pendingStop.add(j.id);                          // segura "stopping" até o servidor confirmar
+        j.status = "stopping";
+        paint(row, j);
+        send({ type: "CANCEL", jobId: j.id, src: "popup" }).then((r) => {
+          if (r && r.ok) return;
+          pendingStop.delete(j.id); j.status = prev; paint(row, j);   // falhou: devolve o botão pra tentar de novo
+          statusEl.textContent = t("cancelFail");                     // igual à pilula: avisa que não cancelou
+        });
+      });
+      jobRows.set(j.id, row);
+    }
+    paint(row, j);
+    jobsEl.appendChild(row);
+  });
+  function paint(row, j) {
+    row.classList.toggle("live", !!j.live);
+    const x = row.querySelector(".j-x");
+    if (j.live && j.status !== "queued") { x.textContent = t("stopSave"); x.classList.add("j-stop"); x.title = t("stopSave"); }
+    else { x.textContent = "✕"; x.classList.remove("j-stop"); x.title = t("cancel"); }
+    const stopping = j.status === "stopping" || (j.live && j.status === "merging");   // merging em live = resgate: cancelar mataria o salvamento
+    x.style.pointerEvents = stopping ? "none" : "";
+    x.style.opacity = stopping ? ".45" : "";
+    x.disabled = stopping;                              // pointerEvents não cobre teclado
+    row.querySelector(".stream-name").textContent = jobName(j);
+    const st = row.querySelector(".j-stage");
+    const txt = st.querySelector(".j-txt"), line = jobStage(j);
+    if (j.status === "stopping") {                      // shimmer no "parando e salvando" + pontinhos do processo
+      txt.classList.add("j-shim");
+      if (txt.textContent !== line) { txt.textContent = line; txt.dataset.text = line; }
+      st.querySelector(".j-dots").style.display = "";
+    } else {
+      if (txt.classList.contains("j-shim")) { txt.classList.remove("j-shim"); delete txt.dataset.text; }
+      if (txt.textContent !== line) txt.textContent = line;
+      st.querySelector(".j-dots").style.display = "none";
+    }
+    const b = st.querySelector(".j-live");              // selo ● AO VIVO antes do "gravando há Xmin" — nó fixo: shimmer contínuo
+    b.style.display = j.live ? "" : "none";
+    if (j.live) {
+      const sh2 = b.querySelector(".j-shim"), lb = t("liveBadge");
+      if (sh2.textContent !== lb) { sh2.textContent = lb; sh2.dataset.text = lb; }
+    }
+    const pct = j.live ? NaN : parseFloat(j.progress);    // live: barra de % não faz sentido
+    const bar = row.querySelector(".j-bar");
+    bar.style.display = isFinite(pct) ? "" : "none";
+    if (isFinite(pct)) bar.firstElementChild.style.width = Math.min(100, pct) + "%";
+  }
+  for (const [id, row] of jobRows) if (!seen.has(id)) { row.remove(); jobRows.delete(id); pendingStop.delete(id); }
+}
+
 function setJob(jobId) {
   currentJob = jobId;
   cancelBtn.hidden = !jobId;
@@ -326,6 +420,7 @@ function track(jobId, onDone) {
     if (d.status === "queued") statusEl.textContent = t("queue");
     else if (d.status === "downloading") statusEl.textContent = d.progress ? t("downloading", d.progress) : t("extracting");
     else if (d.status === "merging") statusEl.textContent = t("merging");
+    else if (d.status === "stopping") statusEl.textContent = t(d.live ? "stoppingSave" : "canceling") + "…";
     else if (d.status === "done") {
       statusEl.textContent = t("savedIn", prettyFolder(d.output_dir || (cfg && cfg.output_dir))) + (d.warning ? " — " + t("ffWarn") : "");
       end(true);
@@ -339,14 +434,39 @@ function track(jobId, onDone) {
   }, 700);
 }
 
+function resolvePopupTarget(targetUrl, fallbackStream) {
+  let url = (targetUrl || "").trim();
+  if (/^https?:\/\/(?:www\.)?linkedin\.com\/feed\/?(?:[?#]|$)/i.test(url)) {
+    const posts = streams.filter(x => x.kind === "LinkedIn");
+    const playing = posts.filter(x => x.pri === 2);
+    const candidates = playing.length ? playing : posts;
+    if (candidates.length !== 1) {
+      statusEl.textContent = /^pt/i.test(navigator.language) ? "Escolha um vídeo da lista ou use o botão sobre o vídeo no feed." : "Choose a video from the list or use the button over the feed video.";
+      return null;
+    }
+    url = candidates[0].url;
+    fallbackStream = candidates[0].fallbackStream || "";
+  }
+  return {url, fallbackStream};
+}
 async function startDownload(targetUrl, quality, fallbackStream, onDone, sendTo) {
-  const url = (targetUrl || "").trim();
+  const resolved = resolvePopupTarget(targetUrl, fallbackStream);
+  if (!resolved) { onDone && onDone(false); return; }
+  const url = resolved.url;
+  fallbackStream = resolved.fallbackStream;
   if (!/^https?:/i.test(url)) {
     statusEl.textContent = t("openPage");
     onDone && onDone(false);
     return;
   }
   statusEl.textContent = t("starting");
+  let live = false;
+  try {                                            // a aba sabe se a página é uma transmissão ao vivo
+    if (currentTab && currentTab.id != null && /^https?:/i.test(currentTab.url || "")) {
+      const r = await chrome.tabs.sendMessage(currentTab.id, { type: "IS_LIVE" }, { frameId: 0 });
+      live = !!(r && r.live);
+    }
+  } catch (_) {}
   const res = await send({
     type: "DOWNLOAD",
     url,
@@ -355,7 +475,9 @@ async function startDownload(targetUrl, quality, fallbackStream, onDone, sendTo)
     title: (currentTab && currentTab.title) || "",
     pageUrl: (currentTab && currentTab.url) || url,
     quality: quality || "best",
-    target: sendTo || ""
+    target: sendTo || "",
+    live
+    ,linkedinManifest: streams.find(x => x.url === url)?.linkedinManifest
   });
 
   if (!res || !res.ok || !res.job_id) {
@@ -490,6 +612,8 @@ async function boot() {
   }, 800);
 
   setInterval(() => { if (!document.hidden) checkHealth(); }, 2500);
+  pollJobs();
+  setInterval(() => { if (!document.hidden) pollJobs(); }, 1100);   // downloads do navegador em andamento (lista com cancelar)
 
   // atualização automática enquanto o popup está aberto: a página troca de vídeo, o player carrega depois, etc.
   let urlEdited = false;
@@ -556,9 +680,9 @@ async function openCollection(seed) {
 }
 allBtn.addEventListener("click", () => openCollection({items:groupize(streams).map(g=>({url:g.best.url,title:g.best.title||"",referer:currentTab&&currentTab.url||""})),quality:$("quickQuality").value}));
 
-cancelBtn.addEventListener("click", async () => {
-  if (!currentJob) return;
-  const r = await send({ type: "CANCEL", jobId: currentJob });
+cancelBtn.addEventListener("click", async (e) => {
+  if (!e.isTrusted || !currentJob) return;
+  const r = await send({ type: "CANCEL", jobId: currentJob, src: "popup" });
   statusEl.textContent = r && r.ok ? t("canceledMsg") : t("cancelFail");
 });
 
@@ -578,7 +702,7 @@ if (EDITORS && /Windows|Macintosh|Mac OS X/i.test(navigator.userAgent)) $("sendR
 if (!EDITORS) { const cr = $("compatRow"); if (cr) cr.hidden = true; }
 if (EDITORS) $("edPill").hidden = false;
 $("batchBtn").addEventListener("click", () => openCollection({}));
-$("audioBtn").addEventListener("click",()=>{const url=(urlInput.value||(currentTab&&currentTab.url)||"").trim();openCollection({items:NVFCollection.playlistUrl(url,false)?undefined:[{url,title:currentTab&&currentTab.title||"",fallbackStream:streams[0]?streams[0].url:"",referer:currentTab&&currentTab.url||url}],url:NVFCollection.playlistUrl(url,false)?url:undefined,media:"audio"});});
+$("audioBtn").addEventListener("click",()=>{const resolved=resolvePopupTarget(urlInput.value||(currentTab&&currentTab.url)||"",streams[0]?streams[0].url:"");if(!resolved)return;const {url,fallbackStream}=resolved;openCollection({items:NVFCollection.playlistUrl(url,false)?undefined:[{url,title:currentTab&&currentTab.title||"",fallbackStream,linkedinManifest:streams.find(it=>it.url===url)?.linkedinManifest,referer:currentTab&&currentTab.url||url}],url:NVFCollection.playlistUrl(url,false)?url:undefined,media:"audio"});});
 $("playlistBtn").addEventListener("click",()=>{const url=(urlInput.value||(currentTab&&currentTab.url)||"").trim();openCollection({url:NVFCollection.playlistUrl(url,true),quality:$("quickQuality").value});});
 setInterval(()=>{$("playlistBtn").hidden=!NVFCollection.playlistUrl((urlInput.value||(currentTab&&currentTab.url)||"").trim(),true);},500);
 document.querySelectorAll("button[data-target]").forEach((btn) => {
@@ -598,6 +722,17 @@ urlInput.addEventListener("keydown", (e) => {
 
 chrome.storage.onChanged.addListener((ch, area) => {
   if (area === "local" && ch.cfg) applyConfig(ch.cfg.newValue);
+});
+
+// accordion (transitions.dev): as seções "Em andamento" e "Detectados" recolhem/expandem
+document.querySelectorAll(".t-acc-head").forEach((h) => {
+  h.addEventListener("click", () => {
+    const acc = h.closest(".t-acc");
+    if (!acc) return;
+    const open = acc.getAttribute("data-open") === "true";
+    acc.setAttribute("data-open", String(!open));
+    h.setAttribute("aria-expanded", String(!open));
+  });
 });
 
 boot();

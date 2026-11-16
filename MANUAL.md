@@ -23,6 +23,16 @@ No editor, abra **Janela → Extensões → Noe VFX Downloader for Editors**. Co
 
 **Na mesma página:** “Escolher vídeos desta página…” abre a seleção. **Uma lista ou playlist:** “Links e playlists…” no popup permite escolher itens, vídeo/áudio, formato e destino. **No editor:** use a mesma seleção no painel Adobe. Cada colagem vira um item; não é preciso dar Enter entre links.
 
+## Três tarefas ao mesmo tempo
+
+Grave **até três lives simultâneas** ou combine lives e vídeos comuns. O limite é de **três tarefas ativas no total**: por exemplo, duas lives e um vídeo baixando. Os próximos itens aguardam na fila e começam quando uma vaga é liberada. Uma live ocupa sua vaga até terminar ou você escolher **Parar e salvar**.
+
+No feed do YouTube, passe o mouse na miniatura e use o botão do Downloader. Quando o card já fornece o endereço da transmissão, é possível iniciar a gravação sem abrir a página do vídeo ou reproduzi-lo. Em outros sites, e quando a fonte ainda não foi identificada, pode ser necessário dar play por alguns segundos. A gravação depende do acesso à transmissão e da disponibilidade da fonte.
+
+A pílula azul acompanha o download. Clique na seta para abrir os cards acima dela; clique novamente para recolher. Cada card mostra título, etapa e progresso. **Parar e salvar** encerra a captura da live e prepara o arquivo. O **X** cancela o vídeo ou item em espera. A confirmação fica no próprio card, que sai com animação enquanto a pilha se reorganiza.
+
+[Veja os três exemplos ilustrados](https://noevfx.github.io/NoeVFX-downloader/navegador.html#simultaneos)
+
 ## Qualidade e compatibilidade
 
 Nativa busca a maior resolução disponível; 1080p e 720p são limites. No fluxo Adobe, se houver H.264 na resolução escolhida, o vídeo é preservado. Se precisar converter, o progresso informa a etapa e a CPU/GPU usada. “Só áudio” oferece MP3, M4A, WAV, FLAC e Opus para pasta; nos destinos Adobe, MP3, M4A e WAV. WAV/FLAC não recuperam qualidade perdida.

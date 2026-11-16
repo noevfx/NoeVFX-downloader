@@ -1,5 +1,5 @@
 /* ============================================================================
-   Noe VFX Downloader — Service Worker v3.2.1  (noevfx.com)
+   Noe VFX Downloader — Service Worker v3.2.2  (noevfx.com)
    - Detecção persistente (sobrevive à suspensão do service worker)
    - Detecta por extensão de arquivo E pelo tipo do conteúdo (Content-Type)
    - Badge vermelho com número branco = vídeos encontrados na aba
@@ -54,6 +54,10 @@ async function fetchJson(url, opts = {}, timeout = 9000) {
     const r = await fetch(url, { ...opts, signal: ctl.signal, cache: "no-store" });
     const data = await r.json().catch(() => ({}));
     return { ok: r.ok, status: r.status, data };
+  } catch (e) {
+    // socket recusado ou abortado: o app local está fora do ar (ou travou) —
+    // nunca vazar o texto do Chrome ("Failed to fetch") para a interface
+    return { ok: false, offline: true, error: "Servidor local offline", data: {} };
   } finally {
     clearTimeout(tm);
   }
@@ -260,6 +264,8 @@ function addStream(tabId, url, kind, extra) {
     if (extra && extra.thumb && !hit.thumb && extra.thumb !== THUMB.get(tabId)) { hit.thumb = extra.thumb; changed = true; }
     if (extra && extra.title && !hit.title) { hit.title = extra.title; changed = true; }
     if (extra && extra.pri != null && (hit.pri || 0) !== extra.pri) { hit.pri = extra.pri; changed = true; }
+    if (extra && isHttp(extra.fallbackStream) && hit.fallbackStream !== extra.fallbackStream) { hit.fallbackStream = extra.fallbackStream; changed = true; }
+    if (extra && extra.linkedinManifest) { hit.linkedinManifest = extra.linkedinManifest; changed = true; }
     if (changed) scheduleFlush(tabId);
     return;
   }
@@ -283,6 +289,8 @@ function addStream(tabId, url, kind, extra) {
   if (extra && isHttp(extra.ref)) item.ref = extra.ref;
   if (extra && extra.pri) item.pri = extra.pri;
   if (extra && extra.pg) item.pg = 1;
+  if (extra && isHttp(extra.fallbackStream)) item.fallbackStream = extra.fallbackStream;
+  if (extra && extra.linkedinManifest) item.linkedinManifest = extra.linkedinManifest;
   // miniatura da página fica UMA vez por aba (THUMB); o item só guarda a sua se for diferente
   if (extra && extra.thumb && extra.thumb !== THUMB.get(tabId)) item.thumb = extra.thumb;
   list.unshift(item);
@@ -469,8 +477,8 @@ async function startDownload(payload, sender) {
   const best = isHttp(payload.fallbackStream) ? payload.fallbackStream : (list[0] ? list[0].url : "");
   const useCookies = payload.useCookies !== false && cfg.use_cookies !== false;
 
-  const fallbackUrl = isHttp(payload.fallbackStream) ? payload.fallbackStream : (payload.url === pageUrl ? best : "");
   const primItem = findItem(payload.url);
+  const fallbackUrl = primItem && primItem.kind === "LinkedIn" ? (isHttp(primItem.fallbackStream) ? primItem.fallbackStream : "") : (isHttp(payload.fallbackStream) ? payload.fallbackStream : (payload.url === pageUrl ? best : ""));
   const fbItem = fallbackUrl ? findItem(fallbackUrl) : null;
   const cookies = useCookies ? await cookieTxt([payload.url, fallbackUrl, pageUrl]) : "";
 
@@ -487,6 +495,8 @@ async function startDownload(payload, sender) {
     organizeBySite: !!cfg.organize_by_site,
     single: payload.single !== false
   };
+  if (payload.live === true) body.live = true;   // live: gravação "infinita" — sem ela vira "Baixando 0%" eterno
+  if (payload.linkedinManifest || (primItem && primItem.linkedinManifest)) body.linkedinManifest = payload.linkedinManifest || primItem.linkedinManifest;
   if (["mp3", "m4a", "wav", "flac", "opus"].includes(payload.audio_format)) body.audio_format = payload.audio_format;
   if (payload.target === "premiere" || payload.target === "aftereffects") body.target = payload.target;   // pasta do projeto aberto, em H.264
   else if (isExtPage(sender) && typeof payload.outDir === "string" && payload.outDir) body.outDir = payload.outDir.slice(0, 1024);  // "vários links": outra pasta
@@ -520,7 +530,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch (msg.type) {
       case "OPEN_COLLECTION": {
         const seed = msg.seed && typeof msg.seed === "object" ? msg.seed : {};
-        const items = Array.isArray(seed.items) ? seed.items.filter(it => it && isHttp(it.url)).slice(0,500).map(it=>({url:it.url,title:String(it.title||"").slice(0,300),referer:isHttp(it.referer)?it.referer:"",fallbackStream:isHttp(it.fallbackStream)?it.fallbackStream:""})) : undefined;
+        const items = Array.isArray(seed.items) ? seed.items.filter(it => it && isHttp(it.url)).slice(0,500).map(it=>({url:it.url,title:String(it.title||"").slice(0,300),referer:isHttp(it.referer)?it.referer:"",fallbackStream:isHttp(it.fallbackStream)?it.fallbackStream:"",linkedinManifest:it.linkedinManifest})) : undefined;
         const id = crypto.randomUUID();
         await chrome.storage.session.set({["collection_seed_"+id]:{url:isHttp(seed.url)?seed.url:"",items,media:seed.media==="audio"?"audio":"video",quality:QUALITIES.includes(seed.quality)?seed.quality:"best"}});
         await chrome.tabs.create({url:chrome.runtime.getURL("batch.html?seed="+id)});
@@ -698,24 +708,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       case "DOWNLOAD_MANY": {
         const urls = [...new Set(Array.isArray(msg.urls) ? msg.urls.filter(isHttp) : [])].slice(0, 30);
-        const out = [];
-        for (const u of urls) {
-          try {
-            const r = await startDownload({
-              url: u,
-              fallbackStream: msg.fallbackStream || "",
-              referer: msg.referer,
-              quality: msg.quality,
-              title: msg.title,
-              pageUrl: msg.referer,
-              single: false
-            }, sender);
-            out.push(r);
-          } catch (e) {
-            out.push({ ok: false, error: String(e) });
+        const out = new Array(urls.length);
+        let idx = 0;
+        async function worker() {                       // 5 em paralelo: 30 links em série estouravam o timeout do content
+          while (idx < urls.length) {
+            const i = idx++;
+            try {
+              out[i] = await startDownload({
+                url: urls[i],
+                fallbackStream: "",                           // o fallback é do vídeo da página — repassar a todos faria um item baixar o vídeo de outro
+                referer: msg.referer,
+                quality: msg.quality,
+                title: msg.title,
+                pageUrl: msg.referer,
+                single: false
+              }, sender);
+            } catch (e) {
+              out[i] = { ok: false, error: String(e) };
+            }
           }
         }
-        return { ok: true, results: out, queued: out.filter((x) => x.ok).length };
+        await Promise.all(Array.from({ length: Math.min(5, urls.length) }, worker));
+        return { ok: true, results: out,
+                 queued: out.filter((x) => x && x.ok).length,
+                 failed: out.filter((x) => !x || !x.ok).length };
       }
 
       case "STATUS": {
@@ -727,11 +743,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       }
 
+      case "JOBS": {
+        try {
+          const r = await fetchJson(SERVER + "/jobs", { headers: HDRS }, 5000);
+          return { ok: r.ok, data: r.data };
+        } catch (_) {
+          return { ok: false };
+        }
+      }
+
       case "CANCEL": {
         try {
           const r = await fetchJson(SERVER + "/cancel", {
-            method: "POST", headers: HDRS, body: JSON.stringify({ id: String(msg.jobId || "") })
-          }, 6000);
+            method: "POST", headers: HDRS,
+            body: JSON.stringify({ id: String(msg.jobId || ""), src: String(msg.src || "") })   // origem: forense no server.log
+          }, 45000);                                        // live: parada gentil (q no ffmpeg) + resgate/remux podem levar alguns segundos
           return { ok: r.ok };
         } catch (_) {
           return { ok: false };
@@ -745,7 +771,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             SERVER + "/thumb?url=" + encodeURIComponent(msg.url) +
             "&referer=" + encodeURIComponent(isHttp(msg.referer) ? msg.referer : "") +
             "&ua=" + encodeURIComponent(navigator.userAgent);
-          const r = await fetch(u, { headers: { "X-NoeVFX-Client": "1" }, cache: "force-cache" });
+          const ctl = new AbortController();                       // fetch puro não tinha timeout: socket mudo travava a fila de thumbs
+          const tm = setTimeout(() => ctl.abort(), 12000);
+          let r;
+          try {
+            r = await fetch(u, { headers: { "X-NoeVFX-Client": "1" }, cache: "force-cache", signal: ctl.signal });
+          } finally {
+            clearTimeout(tm);
+          }
           if (!r.ok) return { ok: false };
           const buf = new Uint8Array(await r.arrayBuffer());
           let bin = "";

@@ -157,6 +157,13 @@ function rawReq(port, method, p, body, headers = {}) {
           for (let i = 0; i < 6; i++) fetch("https://video.twimg.com:${fp}/ext_tw_video/9/pu/vid/avc1/0/0/720x1280/nF6eT09VWJoRaF" + i + ".mp4?tag=14").then(r => r.blob());
           fetch("https://video.twimg.com:${fp}/ext_tw_video/9/pu/vid/avc1/0/0/128000/WlsQAV9pMRtA4YQt.mp4?tag=14").then(r => r.blob());</script>`);
     }
+    if (host === "www.linkedin.com") {
+      const post = (i, id) => `<article data-urn="urn:li:activity:${id}" style="position:relative;width:400px;margin:12px 0">
+        <a href="/feed/update/urn:li:activity:${id}/">Post ${i}</a>
+        <div style="position:relative;width:360px;height:270px"><video muted autoplay loop width=360 height=270 data-i=${i}></video><div class="cover" style="position:absolute;inset:0"></div></div></article>`;
+      return res.end(`<!doctype html><meta charset=utf-8><title>LinkedIn feed</title><body style="margin:0">${post(0,"7521645972955852801")}${post(1,"7521645972955852802")}
+        <script>${blobJs};document.querySelectorAll("video").forEach(v=>loadBlob(v,+v.dataset.i));</script>`);
+    }
     if (host === "www.instagram.com") {
       // feed: cada post tem <article>, link do post e uma CAMADA por cima do vídeo (o mouse nunca toca o <video>)
       const post = (i, code, kind) => `<article style="position:relative;margin:10px 0;width:360px;height:300px">
@@ -224,7 +231,7 @@ function rawReq(port, method, p, body, headers = {}) {
   const jobs = async () => (await rawReq(sp, "GET", "/jobs", null, H)).json.jobs || [];
 
   const br = spawn(BROWSER, ["--headless=new", `--remote-debugging-port=${dbg}`, `--user-data-dir=${path.join(tmp, "prof")}`, `--load-extension=${extDir}`,
-    "--host-resolver-rules=MAP www.instagram.com 127.0.0.1, MAP www.tiktok.com 127.0.0.1, MAP x.com 127.0.0.1, MAP www.pinterest.com 127.0.0.1, MAP v1.pinimg.com 127.0.0.1, MAP www.facebook.com 127.0.0.1, MAP video.xx.fbcdn.net 127.0.0.1, MAP video.twimg.com 127.0.0.1, MAP www.exemplo.test 127.0.0.1, MAP scontent.cdninstagram.com 127.0.0.1",
+    "--host-resolver-rules=MAP www.linkedin.com 127.0.0.1, MAP www.instagram.com 127.0.0.1, MAP www.tiktok.com 127.0.0.1, MAP x.com 127.0.0.1, MAP www.pinterest.com 127.0.0.1, MAP v1.pinimg.com 127.0.0.1, MAP www.facebook.com 127.0.0.1, MAP video.xx.fbcdn.net 127.0.0.1, MAP video.twimg.com 127.0.0.1, MAP www.exemplo.test 127.0.0.1, MAP scontent.cdninstagram.com 127.0.0.1",
     "--autoplay-policy=no-user-gesture-required", "--ignore-certificate-errors", "--window-size=1100,900",
     "--no-first-run", "--no-default-browser-check", "--disable-features=DisableLoadExtensionCommandLineSwitch",
     ...(process.env.CI ? ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] : []), "about:blank"],
@@ -328,6 +335,18 @@ function rawReq(port, method, p, body, headers = {}) {
     const dl1 = (await rec()).filter((m) => m.type === "DOWNLOAD").pop();
     check("clicar no ícone do 2º vídeo pede a URL do POST dele", !!dl1 && dl1.url === "https://www.instagram.com/reel/BBBBB2/", dl1 ? dl1.url : "sem DOWNLOAD");
     check("o servidor recebeu o mesmo pedido", !!j1 && j1.url === "https://www.instagram.com/reel/BBBBB2/", j1 ? j1.url : "sem job");
+
+    /* ============================ LinkedIn (feed) ============================ */
+    console.log("\n== LinkedIn: feed com dois players blob cobertos por camadas");
+    await goto(`https://www.linkedin.com:${fp}/feed/`);
+    const cl = await page.eval(`(()=>{const r=document.querySelectorAll("video")[1].getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()`);
+    await hover(cl[0], cl[1]);
+    check("LinkedIn: botão aparece no feed sobre o player", await fabVisible());
+    const lis = await waitItems(m => [...m.values()].filter(x => x.kind === "LinkedIn").length === 2);
+    check("LinkedIn: lista identifica os dois posts, sem enviar a URL do feed", [...lis.values()].filter(x => x.kind === "LinkedIn").length === 2 && !lis.has(`https://www.linkedin.com:${fp}/feed/`));
+    await clickFabMain();
+    const lid = (await rec()).filter(m => m.type === "DOWNLOAD").pop();
+    check("LinkedIn: clique no segundo player envia o segundo post", lid && lid.url === "https://www.linkedin.com/feed/update/urn:li:activity:7521645972955852802/", lid && lid.url);
 
     /* ============================ X (Twitter) ============================ */
     console.log("\n== Timeline do X (vídeo em pedaços de video.twimg.com, blob:, vários tweets)");

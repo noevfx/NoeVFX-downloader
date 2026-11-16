@@ -7,15 +7,15 @@
 
 **Para navegadores Chromium:** Chrome, Edge, Brave, Opera e Vivaldi. Painéis Adobe na edição **for Editors**, para Windows e macOS. O Noe VFX Downloader também funciona no Linux.
 
-> **Versão:** 3.2.1. Baixe os pacotes oficiais em [Releases](https://github.com/noevfx/NoeVFX-downloader/releases). O repositório agora se chama `noevfx-downloader`; os pacotes agora se chamam NoeVFX-Downloader e NoeVFX-Downloader-for-Editors. Para migrar de qualquer versão anterior à 3.2.1, rode o instalador novo por cima uma vez.
+> **Versão:** 3.2.2. Baixe os pacotes oficiais em [Releases](https://github.com/noevfx/NoeVFX-downloader/releases). O repositório agora se chama `noevfx-downloader`; os pacotes agora se chamam NoeVFX-Downloader e NoeVFX-Downloader-for-Editors. Para migrar de qualquer versão anterior à 3.2.1, rode o instalador novo por cima uma vez.
 
 ## Você encontra. O projeto recebe.
 
 <table>
 <tr><th>No navegador</th><th>No Premiere e no After Effects</th></tr>
 <tr>
-<td width="50%"><a href="https://noevfx.github.io/NoeVFX-downloader/navegador.html"><img src="https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/popup-editors-3.2.0.png" alt="Popup atual: Enviar para o projeto, botões Premiere e After Effects e Links e playlists…"></a></td>
-<td width="50%"><a href="https://noevfx.github.io/NoeVFX-downloader/manual.html"><img src="https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/painel-adobe-3.2.1.png" alt="Painel Adobe atual com uma lista de links, qualidade, Baixar e importar e resultado de cada vídeo"></a></td>
+<td width="50%"><a href="https://noevfx.github.io/NoeVFX-downloader/navegador.html"><img src="https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/popup-editors-3.2.2.png" alt="Popup atual: Enviar para o projeto, botões Premiere e After Effects e Links e playlists…"></a></td>
+<td width="50%"><a href="https://noevfx.github.io/NoeVFX-downloader/manual.html"><img src="https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/painel-adobe-3.2.2.png" alt="Painel Adobe atual com uma lista de links, qualidade, Baixar e importar e resultado de cada vídeo"></a></td>
 </tr>
 <tr><td>Achou uma referência? Use <b>Enviar para o projeto</b>.</td><td>Recebeu uma lista? Cole os links e use <b>Baixar e importar</b>.</td></tr>
 </table>
@@ -35,7 +35,7 @@ O editor precisa estar aberto, com o projeto salvo e o componente Adobe instalad
 <details>
 <summary><b>Veja o botão sobre o player e o menu de envio</b></summary>
 
-<p align="center"><a href="https://noevfx.github.io/NoeVFX-downloader/manual.html#pelo-navegador"><img src="https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/video-envio-3.2.0.png" width="420" alt="Página web com player, botão do Downloader e menu com os destinos Premiere e After Effects"></a></p>
+<p align="center"><a href="https://noevfx.github.io/NoeVFX-downloader/manual.html#pelo-navegador"><img src="https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/video-envio-3.2.2.png" width="420" alt="Página web com player, botão do Downloader e menu com os destinos Premiere e After Effects"></a></p>
 
 </details>
 
@@ -53,7 +53,7 @@ Abra **Noe VFX Downloader for Editors** no Premiere ou After Effects. Cole os li
 <details>
 <summary><b>Veja os menus de qualidade e destino</b></summary>
 
-![Links e playlists… com qualidade e destino do projeto](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/varios-links-3.2.1.png)
+![Links e playlists… com qualidade e destino do projeto](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/varios-links-3.2.2.png)
 
 </details>
 
@@ -71,6 +71,28 @@ Também há M4A, WAV, FLAC e Opus para salvar em pasta. Para importar no Premier
 **Cole sem se preocupar com Enter:** cada colagem reconhecida vira um item. Uma lista com um link por linha também funciona. Depois de enviar a seleção, a fila continua no app local mesmo ao fechar a aba; reabra Links e playlists para acompanhar a última lista do perfil. Reiniciar o app ou desligar o PC interrompe a fila, sem retomada automática.
 
 [Veja playlists, áudio e seleção passo a passo →](https://noevfx.github.io/NoeVFX-downloader/navegador.html#playlists)
+
+## Três tarefas ao mesmo tempo
+
+Grave **até três lives simultâneas** ou combine lives e vídeos comuns. O limite é de **três tarefas ativas no total**: por exemplo, duas lives e um vídeo baixando. Os próximos itens aguardam na fila e começam quando uma vaga é liberada. Uma live ocupa sua vaga até terminar ou você escolher **Parar e salvar**.
+
+No feed do YouTube, passe o mouse na miniatura e use o botão do Downloader. Quando o card já fornece o endereço da transmissão, é possível iniciar a gravação sem abrir a página do vídeo ou reproduzi-lo. Em outros sites, e quando a fonte ainda não foi identificada, pode ser necessário dar play por alguns segundos. A gravação depende do acesso à transmissão e da disponibilidade da fonte.
+
+A pílula azul acompanha o download. Clique na seta para abrir os cards acima dela; clique novamente para recolher. Cada card mostra título, etapa e progresso. **Parar e salvar** encerra a captura da live e prepara o arquivo. O **X** cancela o vídeo ou item em espera. A confirmação fica no próprio card, que sai com animação enquanto a pilha se reorganiza.
+
+### Três lives simultâneas
+
+![Três lives em gravação, com Parar e salvar por card](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/site/assets/tres-lives-3.2.2.png)
+
+### Cinco itens: três baixando e dois aguardando
+
+![Fila com três vídeos baixando e dois aguardando](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/site/assets/fila-cinco-3.2.2.png)
+
+### Duas lives, um vídeo e mais um na fila
+
+![Fila mista com duas lives, um vídeo baixando e um aguardando](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/site/assets/fila-mista-3.2.2.png)
+
+*Capturas da interface 3.2.2 com dados de exemplo. A fila continua no aplicativo local; feche uma gravação com Parar e salvar antes de desligar o computador.*
 
 ## Escolha sua edição
 

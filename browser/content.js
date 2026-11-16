@@ -1,5 +1,5 @@
 /* ============================================================================
-   Noe VFX Downloader — Content Script v3.2.1  (noevfx.com)
+   Noe VFX Downloader — Content Script v3.2.2  (noevfx.com)
    - Ícone flutuante sobre QUALQUER <video> (Shadow DOM, sem conflito)
    - Arrastável dentro da área do vídeo (posição salva por site)
    - Some sozinho após 2 s com o mouse parado
@@ -20,7 +20,23 @@
   const FAB_SIZE = 40;
 
   const STYLE = `
-    :host { all: initial; }
+    :host {
+      all: initial;
+      /* ---- transitions.dev motion tokens — um lugar só pra afinar toda a motion da pilula ---- */
+      --toast-open: 350ms; --toast-close: 250ms; --toast-distance: 16px; --toast-blur: 2px; --toast-scale: .97;
+      --toast-ease: cubic-bezier(.22,1,.36,1);
+      --morph-open-dur: 250ms; --morph-close-dur: 150ms; --morph-ease: cubic-bezier(.22,1,.36,1);
+      --morph-close-ease: cubic-bezier(.22,1,.36,1); --morph-fade-dur: 200ms; --morph-blur: 2px; --morph-scale: .97;
+      --acc-expand: 250ms; --acc-collapse: 250ms; --acc-chevron: 250ms; --acc-ease: cubic-bezier(.22,1,.36,1);
+      --stack-open: 350ms; --stack-close: 250ms; --stack-ease: cubic-bezier(.22,1,.36,1);
+      --stack-rise: 60px; --stack-blur: 2px; --stack-scale: .97; --stack-peek: 12px; --stack-spread-gap: 12px;
+      --stack-depth-scale: .06; --stack-depth-fade: .4; --stack-depth1-blur: 1px; --stack-depth2-blur: 2px;
+      --shimmer-dur: 2000ms; --shimmer-ease: linear; --shimmer-band: 400%;
+      --shimmer-base: rgba(255,255,255,.78); --shimmer-highlight: #fff;
+      --check-dur: 500ms; --check-path-delay: 80ms; --check-blur-from: 10px; --check-y-amount: 40px; --check-rotate-from: 80deg;
+      --check-ease-out: cubic-bezier(.22,1,.36,1); --check-ease-bob: cubic-bezier(.34,1.35,.64,1);
+      --shake-dur: 280ms; --shake-distance: 6px; --shake-overshoot: 4px; --shake-ease: cubic-bezier(.22,1,.36,1);
+    }
     * { box-sizing: border-box; font-family: "Segoe UI", Roboto, system-ui, -apple-system, sans-serif; }
     .fab {
       position: fixed; z-index: 2147483647; display: none;
@@ -30,21 +46,44 @@
       box-shadow: 0 6px 20px rgba(0,0,0,.45);
       align-items: center; justify-content: center; cursor: grab;
       touch-action: none; user-select: none;
-      transition: background .12s ease, border-color .12s ease;
+      transition: background .12s ease, border-color .12s ease,
+                  opacity var(--morph-fade-dur) var(--morph-close-ease), scale var(--morph-close-dur) var(--morph-close-ease), filter var(--morph-fade-dur) ease;
     }
+    .fab.morphed { opacity: 0; scale: .8; filter: blur(var(--morph-blur)); pointer-events: none; }   /* o botão "virou" o painel */
     .fab:hover { background: #0066FF; border-color: #4d94ff; }
+    :is(button, select, [role="button"]):focus-visible { outline:2px solid #9bc5ff; outline-offset:2px; }
     .fab svg { width: 22px; height: 22px; display: block; pointer-events: none; }
     .panel {
-      position: fixed; z-index: 2147483647; display: none; width: 268px;
+      position: fixed; z-index: 2147483647; width: min(268px, calc(100vw - 16px));
+      box-sizing:border-box; max-height:calc(100dvh - 16px); overflow-y:auto; overscroll-behavior:contain;
       padding: 10px; border-radius: 14px; border: 1px solid rgba(0,102,255,.35);
       background: rgba(15,17,23,.97); color: #f3f4f8;
       box-shadow: 0 14px 40px rgba(0,0,0,.6);
       backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       font-size: 12px; line-height: 1.35;
+      /* transitions.dev "plus→menu morph": o painel cresce a partir do FAB — o transform-origin
+         é calculado em JS pro canto do botão (o box morfa do gatilho, não só aparece ao lado) */
+      transform-origin: 100% 50%;
+      /* transitions.dev "menu dropdown": popover cresce do gatilho — scale .97→1, abre 250ms,
+         fecha 150ms, sem blur nem slide (o efeito vem do transform-origin, não de exagero) */
+      opacity: 0; scale: var(--morph-scale);
+      visibility: hidden; pointer-events: none;
+      transition: opacity var(--morph-close-dur) var(--morph-close-ease), scale var(--morph-close-dur) var(--morph-close-ease),
+                  visibility 0s linear var(--morph-close-dur);
+    }
+    .panel.is-open {
+      opacity: 1; scale: 1;
+      visibility: visible; pointer-events: auto;
+      transition: opacity var(--morph-open-dur) var(--morph-ease), scale var(--morph-open-dur) var(--morph-ease),
+                  visibility 0s linear 0s;
     }
     .panel .head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
     .panel .head b { font-size: 12.5px; font-weight: 700; letter-spacing:.2px; }
     .panel .head span.brand { color:#4d94ff; font-size:10px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; }
+    .panel .head .x { all:unset; margin-left:auto; cursor:pointer; flex-shrink:0; width:22px; height:22px;
+      display:flex; align-items:center; justify-content:center; border-radius:6px;
+      font-size:14px; font-weight:800; line-height:1; color:#8d98ae; }
+    .panel .head .x:hover { background:rgba(255,255,255,.12); color:#fff; }
     .panel .dest {
       display:flex; align-items:center; gap:6px; padding:6px 8px; margin-bottom:8px;
       border-radius:8px; background: rgba(0,102,255,.12); border:1px solid rgba(0,102,255,.22);
@@ -77,6 +116,7 @@
       all: unset; box-sizing:border-box; min-width:0; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;
       padding:7px 6px; border-radius:9px; font-size:11.5px; font-weight:700; white-space:nowrap; overflow:hidden;
     }
+    .panel button.all-btn, .panel select { box-sizing:border-box; max-width:100%; }
     .panel .send button span { overflow:hidden; text-overflow:ellipsis; }
     .panel .send b { flex-shrink:0; font-size:9.5px; font-weight:800; line-height:1; padding:3px 4px; border-radius:4px; }
     .panel .send button.pr { background:#2a1248; color:#e3ccff; border:1px solid #7b3fe0; }
@@ -104,14 +144,163 @@
     .panel button.tgl.off { background: rgba(255,255,255,.06); color:#8892a8; border-color: rgba(255,255,255,.14); }
     .toast {
       position: fixed; z-index: 2147483647; left: 50%; bottom: 26px; transform: translateX(-50%);
-      display:none; max-width: min(440px, 88vw); padding:9px 14px; border-radius: 999px;
-      background: rgba(12,15,22,.96); color:#fff; font-size:12px; font-weight:600;
-      border:1px solid rgba(0,102,255,.5); box-shadow:0 10px 30px rgba(0,0,0,.55);
+      max-width: min(540px, 92vw); padding:11px 17px; border-radius: 999px;
+      background: #013fff; color:#fff; font-size:14px; font-weight:600;
+      box-shadow:0 10px 30px rgba(0,0,0,.55);
       backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      touch-action: none;                          /* em telas de toque o dedo arrasta a pilula, não rola a página */
+      /* transitions.dev "toast": surgir = rise + cross-blur + scale (abre no clock lento, fecha no rápido).
+         translate/scale são propriedades próprias — o transform do centro/arrasto não disputa com eles. */
+      opacity: 0; translate: 0 var(--toast-distance); scale: var(--toast-scale); filter: blur(var(--toast-blur));
+      visibility: hidden; pointer-events: none;
+      /* border-radius+padding na transição: cápsula ↔ card de jobs morfa, não corta seco */
+      transition: opacity var(--toast-close) var(--toast-ease), translate var(--toast-close) var(--toast-ease),
+                  scale var(--toast-close) var(--toast-ease), filter var(--toast-close) var(--toast-ease),
+                  border-radius var(--toast-close) var(--toast-ease), padding var(--toast-close) var(--toast-ease),
+                  visibility 0s linear var(--toast-close);
     }
-    .toast.err { border-color: rgba(239,68,68,.65); }
-    .toast.ok { border-color: rgba(16,185,129,.6); }
+    .toast.is-open {
+      opacity: 1; translate: 0 0; scale: 1; filter: blur(0);
+      visibility: visible; pointer-events: auto;
+      transition: opacity var(--toast-open) var(--toast-ease), translate var(--toast-open) var(--toast-ease),
+                  scale var(--toast-open) var(--toast-ease), filter var(--toast-open) var(--toast-ease),
+                  border-radius var(--toast-open) var(--toast-ease), padding var(--toast-open) var(--toast-ease),
+                  visibility 0s linear 0s;
+    }
+    .toast.err { border-color: rgba(255,120,120,.95); }
+    .toast.ok { border-color: rgba(120,255,190,.8); }
+    .toast.jobs { cursor:grab; }
+    .toast .j-sum { display:flex; align-items:center; gap:9px; cursor:pointer; user-select:none;
+      margin:-5px -8px; padding:5px 8px; border-radius:10px; }
+    .toast .j-sum:hover { background: rgba(255,255,255,.14); }
+    .toast .j-caret { font-size:10px; opacity:.95; transition: transform var(--acc-chevron) var(--acc-ease); flex-shrink:0; line-height:1;
+      border:1px solid rgba(255,255,255,.6); border-radius:6px; padding:4px 6px; background:rgba(255,255,255,.1); }
+    .toast.spread .j-caret { transform: rotate(180deg); }
+    .toast .j-sumtxt { flex:1; min-width:0; display:flex; align-items:center; }
+    .toast .j-sumt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .toast .j-dot { flex-shrink:0; width:8px; height:8px; border-radius:50%; background:#ff404f;
+      margin-right:7px; animation:nvl-pulse 1.1s ease-in-out infinite; }
+    .toast .j-list { display:none; margin-top:9px; flex-direction:column; gap:8px; max-height:230px; overflow-y:auto; touch-action: pan-y;
+      transition: margin-top var(--stack-open) var(--stack-ease); }
+    .toast.open .j-list { display:flex; }
+    .toast .j-row { display:flex; align-items:center; gap:8px; font-size:13px;
+      background:#2a5cff; border:1px solid rgba(255,255,255,.18); border-radius:12px; padding:7px 10px;
+      filter:blur(0); transform-origin:50% 100%;
+      transition: transform var(--stack-open) var(--stack-ease), opacity var(--stack-open) var(--stack-ease), filter var(--stack-open) var(--stack-ease); }
+    .toast .j-cell { flex:1; min-width:0; }
+    .toast .j-name { font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .toast .j-stage { font-size:12px; opacity:.92; margin-top:1px; display:flex; align-items:center; gap:5px; }
+    .toast .j-live { display:inline-flex; align-items:center; gap:4px; flex-shrink:0; color:#ff404f;
+      font-weight:800; font-size:10.5px; letter-spacing:.4px; }
+    .toast .j-live i { width:7px; height:7px; border-radius:50%; background:#ff404f;
+      animation:nvl-pulse 1.1s ease-in-out infinite; }
+    @keyframes nvl-pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.35; transform:scale(.65); } }
+    .toast .j-dots { display:inline-flex; gap:3px; align-items:center; margin-left:2px; }
+    .toast .j-dots i { width:4px; height:4px; border-radius:50%; background:#fff; opacity:.25; animation:nvdots 1.2s ease-in-out infinite; }
+    .toast .j-dots i:nth-child(2) { animation-delay:.18s; }
+    .toast .j-dots i:nth-child(3) { animation-delay:.36s; }
+    @keyframes nvdots { 0%,60%,100% { opacity:.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-2px); } }
+    .toast .j-bar { height:4px; margin-top:5px; background:rgba(255,255,255,.28); border-radius:4px; overflow:hidden; }
+    .toast .j-bar i { display:block; height:100%; width:0; background:#fff; transition:width .4s ease; }
+    .toast .j-x { all:unset; cursor:pointer; flex-shrink:0; font-size:13px; font-weight:800; line-height:1;
+      padding:4px 8px; border-radius:7px; color:#fff; }
+    .toast .j-x:hover { background:rgba(255,255,255,.22); }
+    .toast .j-stop { all:unset; cursor:pointer; flex-shrink:0; font-size:12px; font-weight:800; line-height:1;
+      padding:7px 10px; border-radius:7px; background:#fff; color:#c01818; white-space:nowrap; }
+    .toast .j-stop:hover { background:rgba(255,255,255,.82); }
+    .toast .j-note { font-size:12.5px; opacity:1; margin-top:8px; display:none; }
+
+    /* O fundo da frente pertence ao mesmo elemento desde o primeiro aviso. */
+    .toast, .toast.jobs {
+      box-sizing:border-box; width:min(460px, calc(100vw - 24px)); min-width:0;
+      height:64px; padding:0 24px; border:0; border-radius:999px; background:#013fff;
+      display:flex; align-items:center; gap:8px; overflow:visible;
+    }
+    .toast.jobs { padding:0; isolation:isolate; }
+    .toast.refresh { width:fit-content; max-width:min(640px, calc(100vw - 24px)); height:auto;
+      min-height:64px; padding:14px 26px; white-space:normal; }
+    .toast.refresh .toast-message { max-width:100%; }
+    .toast.refresh .toast-message-text { white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+    .toast.jobs .j-row.retiring { pointer-events:none; animation:nvl-card-out var(--stack-close) var(--stack-ease) both; }
+    @keyframes nvl-card-out { to { scale:.88; opacity:0; } }
+    .toast:not(.jobs), .toast.jobs .j-note.on { justify-content:center; text-align:center; }
+    .toast-message { position:relative; display:block; min-width:0; max-width:calc(100% - 44px);
+      animation:nvl-content-in var(--stack-open) var(--stack-ease); }
+    .toast-message-text { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:20px; }
+    .toast-message .t-check { position:absolute; right:100%; top:2.5px; margin-right:6px; }
+    .toast .j-txt { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    @media(prefers-reduced-motion:reduce) { .toast-message { animation:none; } }
+    .toast.jobs .j-list { display:contents; }
+    .toast.jobs .j-row {
+      position:absolute; inset:0; box-sizing:border-box; height:100%; padding:8px 24px;
+      background:#013fff; border:0; border-radius:999px; overflow:hidden; color:white;
+      transition:transform var(--stack-open) var(--stack-ease),opacity var(--stack-close) var(--stack-ease);
+    }
+    .toast.jobs .j-row[data-depth="0"] { z-index:2; }
+    .toast.jobs .j-row:not([data-depth="0"]) { opacity:0; pointer-events:none; transform:scale(.97); }
+    .toast.jobs.spread .j-row:not([data-depth="0"]) {
+      opacity:1; pointer-events:auto; transform:translateY(calc(var(--layer) * (-100% - var(--stack-spread-gap))));
+    }
+    .toast.jobs .j-row { display:grid; grid-template-columns:minmax(0,1fr) auto 28px;
+      column-gap:10px; padding-inline:24px 16px; }
+    .toast.jobs .j-cell { grid-column:1; grid-row:1; }
+    .toast.jobs .j-stop { grid-column:2; grid-row:1; }
+    .toast.jobs .j-x:not(.j-stop), .toast.jobs .j-sum { grid-column:3; grid-row:1; }
+    .toast.jobs:has([data-depth="1"]) [data-depth="0"] .j-x:not(.j-stop) { grid-column:2; }
+    .toast.jobs .j-sum:focus-visible { outline:0; }
+    .toast.jobs .j-sum:focus-visible .j-caret { filter:drop-shadow(0 1px 2px #001847); }
+    .toast.jobs .j-name { line-height:16px; }
+    .toast.jobs .j-stage { line-height:15px; margin-top:2px; opacity:1; }
+    .toast.jobs .j-bar { height:4px; margin-top:7px; }
+    .toast.jobs .j-sum { flex:0 0 28px; box-sizing:border-box; height:28px; margin:0; padding:0;
+      justify-content:center; background:transparent; }
+    .toast.jobs:has(.j-row[data-depth="1"]) .j-row[data-depth="0"] { padding-right:16px; }
+    .toast.jobs .j-x:not(.j-stop) { box-sizing:border-box; width:28px; padding-inline:0; text-align:center; }
+    .toast.jobs .j-caret { display:block; width:15px; height:15px; border:0; background:none; padding:0; }
+    .toast.jobs .j-sumtxt { display:none; }
+    .toast.jobs .j-stop { border-radius:999px; padding:7px 10px; }
+    .toast.jobs .j-note.on { position:absolute; inset:0; z-index:5; box-sizing:border-box; margin:0;
+      padding:0 16px; border-radius:inherit; background:#013fff; pointer-events:auto; }
+    @keyframes nvl-content-in { from {opacity:0; translate:0 4px} to {opacity:1; translate:0 0} }
+    .toast.jobs .j-row.is-enter .j-cell, .toast.jobs .j-note.on { animation:nvl-content-in var(--stack-open) var(--stack-ease); }
+    @media(prefers-reduced-motion:reduce) { .toast.jobs * { animation:none!important; transition:none!important; } }
+
+    /* ---- transitions.dev "shimmer text": AO VIVO e "parando e salvando" vivos sem spinner ---- */
+    .j-shim { position: relative; display: inline-block; color: var(--shimmer-base); }
+    .j-shim::before {
+      content: attr(data-text); position: absolute; inset: 0; pointer-events: none;
+      background-image: linear-gradient(90deg, transparent 0%, transparent 40%, var(--shimmer-highlight) 50%, transparent 60%, transparent 100%);
+      background-size: var(--shimmer-band) 100%; background-repeat: no-repeat;
+      background-clip: text; -webkit-background-clip: text;
+      color: transparent; -webkit-text-fill-color: transparent;
+      animation: nv-shim var(--shimmer-dur) var(--shimmer-ease) infinite;
+    }
+    .j-live .j-shim { --shimmer-base: #ff404f; }
+    @keyframes nv-shim { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+    /* ---- transitions.dev "success check": o ✓ aparece desenhando quando o download fecha ---- */
+    .t-check { display:inline-block; margin-right:7px; color:#7dffb0; opacity:0; transform-origin:center; vertical-align:-2px; }
+    .t-check svg { display:block; overflow:visible; width:15px; height:15px; }
+    .t-check svg path { stroke-dasharray:43; stroke-dashoffset:43; }
+    .t-check[data-state="in"] { animation: nv-cf var(--check-dur) var(--check-ease-out) forwards, nv-cr var(--check-dur) var(--check-ease-out) forwards, nv-cb var(--check-dur) var(--check-ease-bob) forwards, nv-cbl var(--check-dur) var(--check-ease-out) forwards; }
+    .t-check[data-state="in"] svg path { animation: nv-cd var(--check-dur) var(--check-ease-out) var(--check-path-delay) forwards; }
+    @keyframes nv-cf { from { opacity:0; } to { opacity:1; } }
+    @keyframes nv-cr { from { transform:rotate(var(--check-rotate-from)); } to { transform:rotate(0); } }
+    @keyframes nv-cb { from { translate:0 var(--check-y-amount); } to { translate:0 0; } }
+    @keyframes nv-cbl { from { filter:blur(var(--check-blur-from)); } to { filter:blur(0); } }
+    @keyframes nv-cd { to { stroke-dashoffset:0; } }
+
+    /* ---- transitions.dev "error shake": o tremor roda via WAAPI (el.animate) — o className
+       é reconstruído a cada poll e uma classe truncaria a animação no meio ---- */
+
+    @media (prefers-reduced-motion: reduce) {
+      .toast, .toast.is-open, .panel, .panel.is-open, .fab, .toast .j-row, .toast .j-caret, .toast .j-bar i { transition: none !important; }
+      .t-check, .t-check svg path, .j-shim::before, .j-dot, .j-live i, .j-dots i { animation: none !important; }
+      .t-check { opacity: 1; } .t-check svg path { stroke-dashoffset: 0; }
+      .j-live i, .j-dots i { opacity: 1; }
+    }
+    .toast .j-note.on { display:flex; align-items:center; }
     .fab:focus-visible, .panel button:focus-visible { outline: 2px solid #7fb0ff; outline-offset: 2px; }
   `;
 
@@ -127,18 +316,29 @@
     toastEl: null,
     toastT: 0,
     video: null,
+    cardEl: null,               // card do YouTube ancorando o FAB em página de lista (sem <video> sob o mouse)
     hideT: 0,
     idleT: 0,
     panelOpen: false,
     lastMove: 0,
     thumb: "",
     sent: new Map(),            // url -> assinatura (miniatura? prioridade): reenvia quando algo MUDA
-    busy: false,
+    jobs: [],                   // downloads ativos do navegador (vêm do /jobs do servidor)
+    jobsOpen: false,            // pilula expandida mostrando a lista
+    notice: null,               // aviso transitório exibido na pilula
+    jobRows: new Map(),         // id do job -> linha da lista (atualização no lugar, sem reconstruir)
+    trackedJobs: new Map(),     // jobs iniciados por esta aba: acompanha até o estado final
     pos: null,
     dragMoved: false,
     dragging: false,
     posLoaded: false,
-    posReady: false      // só grava a posição padrão depois de ler a salva (senão sobrescreveria)
+    posReady: false,     // só grava a posição padrão depois de ler a salva (senão sobrescreveria)
+    toastPos: null,      // posição arrastada da pilula (por site)
+    toastPosLoaded: false,
+    toastPosReady: false,
+    toastMoved: false,   // acabou de arrastar: o clique do release não expande a lista
+    toastMovedT: 0,      // timer que desarma o toastMoved (dedup: arrastos seguidos vale o último)
+    toastDragging: false
   };
 
   const sigOf = (it) => (it.thumb ? 1 : 0) + "|" + (it.pri || 0) + (it.kind === "Pinterest" ? "|" + it.title : "");     // Pinterest: o nome chega depois (API do pin)
@@ -158,8 +358,9 @@
   function staleNotice() {
     if (staleShown) return;
     staleShown = true;
+    finishingJobs.clear();
     try { hideFab(); closePanel(); } catch (_) {}
-    try { toast(t("staleTab"), "err", 15000); } catch (_) {}
+    try { state.jobs = []; if (window === window.top) toast(t("staleTab"), "refresh", 15000); } catch (_) {}
   }
 
   function sendMsg(payload, timeout = 25000) {
@@ -174,12 +375,13 @@
       const t = setTimeout(() => finish({ ok: false, timeout: true }), timeout);
       try {
         chrome.runtime.sendMessage(payload, (r) => {
+          void chrome.runtime.lastError;               // SW indisponível: lê o erro pra não sujar o console
           clearTimeout(t);
           finish(r);
         });
       } catch (_) {
         clearTimeout(t);
-        if (!chrome.runtime || !chrome.runtime.id) staleNotice();
+        if (!chrome.runtime || !chrome.runtime.id) { staleNotice(); finish({ ok: false, stale: true }); return; }
         finish({ ok: false });
       }
     });
@@ -197,37 +399,126 @@
     if (state.posLoaded) return;
     state.posLoaded = true;
     try {
-      chrome.storage.local.get("fabPos", (res) => {
+      chrome.storage.local.get(["fabPos","fabCardPos"], (res) => {
         const map = (res && res.fabPos) || {};
         const p = map[location.hostname];
         if (Array.isArray(p) && p.length === 2 && isFinite(p[0]) && isFinite(p[1])) state.pos = p;
+        const card = res?.fabCardPos?.[location.hostname];
+        if (Array.isArray(card) && card.length === 2 && card.every(Number.isFinite)) state.cardPos = card;
         state.posReady = true;
+        const a = state.pendingAnchor; state.pendingAnchor = null;
+        if (a && a.isConnected && a === (state.cardEl || state.video) && !state.panelOpen) { try { place(a); } catch (_) {} }   // a 1ª aparição já sai no lugar certo — sem o pulo "aparece e se desloca"
       });
     } catch (_) { state.posReady = true; }
   }
 
   function savePos() {
-    if (!state.video || !state.fab) return;
-    const vr = state.video.getBoundingClientRect();
+    const anc = state.video || state.cardEl;
+    if (!anc || !state.fab || videoGone(anc)) return;             // âncora morta → não gravar posição lixo
+    const isCard = anc === state.cardEl;
+    const vr = anc.getBoundingClientRect();
     const fr = state.fab.getBoundingClientRect();
     const availW = Math.max(1, vr.width - FAB_SIZE);
     const availH = Math.max(1, vr.height - FAB_SIZE);
     persistPos([
       Math.min(1, Math.max(0, (fr.left - vr.left) / availW)),
       Math.min(1, Math.max(0, (fr.top - vr.top) / availH))
-    ]);
+    ], isCard);
   }
 
-  function persistPos(pos) {
-    state.pos = pos;
+  function persistPos(pos, isCard) {
+    const key = isCard ? "fabCardPos" : "fabPos";
+    if (isCard) state.cardPos = pos; else state.pos = pos;
     try {
-      chrome.storage.local.get("fabPos", (res) => {
-        const map = (res && res.fabPos) || {};
+      chrome.storage.local.get(key, (res) => {
+        const map = res?.[key] || {};
         map[location.hostname] = pos;
-        chrome.storage.local.set({ fabPos: map });
+        chrome.storage.local.set({ [key]: map });
       });
     } catch (_) {}
   }
+
+  /* ------------------------------------------------------- pilula arrastável */
+  function loadToastPos() {
+    if (state.toastPosLoaded) return;
+    state.toastPosLoaded = true;
+    try {
+      chrome.storage.local.get("toastPos", (res) => {
+        const p = ((res && res.toastPos) || {})[location.hostname];
+        if (Array.isArray(p) && p.length === 2 && isFinite(p[0]) && isFinite(p[1])) state.toastPos = p;
+        state.toastPosReady = true;
+      });
+    } catch (_) { state.toastPosReady = true; }
+  }
+  function saveToastPos() {
+    const el = state.toastEl;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (!r.width) return;
+    state.toastPos = [
+      Math.min(1, Math.max(0, r.left / Math.max(1, innerWidth - r.width))),
+      Math.min(1, Math.max(0, r.top / Math.max(1, innerHeight - r.height)))
+    ];
+    try {
+      chrome.storage.local.get("toastPos", (res) => {
+        const map = (res && res.toastPos) || {};
+        map[location.hostname] = state.toastPos;
+        chrome.storage.local.set({ toastPos: map });
+      });
+    } catch (_) {}
+  }
+  function applyToastPos() {
+    const el = state.toastEl;
+    if (!el || !state.toastPos || state.toastDragging) return;
+    const w = el.offsetWidth, h = el.offsetHeight;
+    const left = Math.min(Math.max(8, state.toastPos[0] * Math.max(1, innerWidth - w)), Math.max(8, innerWidth - w - 8));
+    const top = Math.min(Math.max(8, state.toastPos[1] * Math.max(1, innerHeight - h)), Math.max(8, innerHeight - h - 8));
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = `${Math.round(top)}px`;
+    el.style.bottom = "auto";
+    el.style.transform = "none";
+  }
+  window.addEventListener("resize", applyToastPos, { passive:true });
+  function onToastDown(e) {
+    if (e.button !== 0) return;
+    if (e.target && e.target.closest && e.target.closest(".j-x,button,a,input")) return;   // botões continuam botões
+    const el = state.toastEl;
+    if (!el || !el.classList.contains("is-open")) return;   // pilula invisível não arrasta
+    // .j-sum precisa do click pra expandir/recolher a lista — preventDefault no pointerdown matava ele (div, não button)
+    if (!(e.target && e.target.closest && e.target.closest(".j-sum"))) e.preventDefault();   // no resto da pilula: não selecionar texto ao arrastar
+    e.stopPropagation();
+    const startX = e.clientX, startY = e.clientY;
+    const r = el.getBoundingClientRect();
+    const offX = startX - r.left, offY = startY - r.top;
+    const w = r.width, h = r.height;
+    state.toastDragging = true;
+    let moved = false;
+    const move = (ev) => {
+      if (!moved && Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 4) return;
+      moved = true;
+      state.toastMoved = true;
+      el.style.transform = "none";
+      el.style.bottom = "auto";
+      el.style.left = `${Math.round(Math.min(Math.max(8, ev.clientX - offX), Math.max(8, innerWidth - w - 8)))}px`;
+      el.style.top = `${Math.round(Math.min(Math.max(8, ev.clientY - offY), Math.max(8, innerHeight - h - 8)))}px`;
+      el.style.cursor = "grabbing";
+    };
+    const up = () => {
+      document.removeEventListener("pointermove", move, true);
+      document.removeEventListener("pointerup", up, true);
+      document.removeEventListener("pointercancel", up, true);
+      el.style.cursor = "";
+      state.toastDragging = false;
+      if (moved) saveToastPos();
+      clearTimeout(state.toastMovedT);
+      state.toastMovedT = setTimeout(() => { state.toastMoved = false; }, 60);   // o clique pós-arrasto não dispara o expandir (2 arrastos <60ms: vale o último)
+    };
+    document.addEventListener("pointermove", move, true);
+    document.addEventListener("pointerup", up, true);
+    document.addEventListener("pointercancel", up, true);
+  }
+
+
 
   /* -------------------------------------------------------------- utilidades */
   const folderName = (p) => {
@@ -467,6 +758,91 @@
 
   /* TikTok: idem, o vídeo é baixado pela URL da página do vídeo (/@usuario/video/ID). */
   const TT_RE = /^\/(@[\w.]+)\/video\/(\d+)/;
+  // LinkedIn: o feed não é um vídeo. Resolva somente o card do player apontado.
+  function liCanonical(raw) {
+    try {
+      const u = new URL(raw, location.href);
+      if (!/(^|\.)linkedin\.com$/i.test(u.hostname)) return "";
+      const p = decodeURIComponent(u.pathname);
+      const m = p.match(/^\/feed\/update\/(urn:li:activity:\d+)\/?$/);
+      if (m) return "https://www.linkedin.com/feed/update/" + m[1] + "/";
+      if (/^\/posts\/[^/]+-\d+-[\w-]{4}\/?$/.test(p)) return "https://www.linkedin.com" + p;
+    } catch (_) {}
+    return "";
+  }
+  const liSources = new WeakMap();
+  document.addEventListener('noevfx-linkedin-source', e => {
+    if (!isLI() || !e.target || e.target.tagName !== 'VIDEO' || typeof e.detail !== 'string' || e.detail.length > 1200000) return;
+    try {
+      const data = JSON.parse(e.detail);
+      if ((Array.isArray(data.playlists) && data.playlists.length) || /^https:\/\/dms\.licdn\.com\/playlist\/vid\//i.test(data.sourceUrl || '')) liSources.set(e.target,data);
+      else liSources.delete(e.target);
+    } catch (_) {}
+  });
+  function liSource(v) {
+    const data = v && liSources.get(v);
+    return data && data.videoSrc === v.currentSrc ? data : undefined;
+  }
+  function liManifest(v) {
+    const data = liSource(v);
+    return data && Array.isArray(data.playlists) && data.playlists.length ? data : undefined;
+  }
+  function liMedia(v) {
+    if (!v) return "";
+    const candidates = [];
+    try {
+      const sources = JSON.parse(v.getAttribute("data-sources") || "[]");
+      if (Array.isArray(sources)) sources.slice().sort((a,b) => (+b["data-bitrate"] || 0) - (+a["data-bitrate"] || 0)).forEach(s => candidates.push(s.src));
+    } catch (_) {}
+    candidates.push(v.currentSrc, v.src);
+    const captured = liSource(v);
+    if (captured) {
+      if (/^https:\/\/dms\.licdn\.com\/playlist\/vid\//i.test(captured.sourceUrl || '')) candidates.push(captured.sourceUrl);
+      const first = captured.playlists?.[0]?.segments?.[0]?.uri;
+      if (/^https:\/\/dms\.licdn\.com\/playlist\/vid\/v2\//i.test(first || '')) candidates.push(first);
+    }
+    try { v.querySelectorAll("source[src]").forEach(s => candidates.push(s.src)); } catch (_) {}
+    // MSE usa blob:, mas o poster/URN identifica o MESMO asset nas requisições.
+    // Nunca recorrer ao primeiro stream da aba (pode ser de outro post).
+    const urn = v.getAttribute("data-digitalmedia-asset-urn") || "";
+    let poster = v.poster || v.getAttribute("data-poster-url") || "";
+    // Feed SDUI: o poster é um <img> dentro do Video.js, não um atributo do video.
+    if (!poster) {
+      const player = v.closest('[data-vjs-player], [aria-label="Video Player"]');
+      if (player && player.querySelectorAll("video").length === 1) {
+        const img = [...player.querySelectorAll("img[src]")].find(i => /licdn\.com\/(?:dms\/image\/|playlist\/vid\/)/i.test(i.src));
+        if (img) poster = img.src;
+      }
+    }
+    const asset = (urn.match(/urn:li:digitalmediaAsset:([\w-]+)/) || poster.match(/\/(?:dms\/image|playlist\/vid)\/(?:v2\/)?([\w-]+)\/(?:videocover|thumbnail)/) || [])[1];
+    if (asset) {
+      try {
+        performance.getEntriesByType("resource").slice(-300).forEach(e => {
+          const u = new URL(e.name);
+          if (/(^|\.)licdn\.com$/i.test(u.hostname) && u.pathname.includes("/" + asset + "/") && /(?:\.m3u8$|\.mpd$|\/mp4-[^/]+\/)/i.test(u.pathname)) candidates.push(u.href);
+        });
+      } catch (_) {}
+    }
+    return candidates.find(s => typeof s === "string" && /^https?:\/\//i.test(s) && !/(?:\.(?:m4s|ts|m4a)(?:[?#]|$)|[?&](?:bytestart|byteend)=|\/(?:drm|segment|chunk|fragment)\/)/i.test(s)) || "";
+  }
+  function liPostUrl(v) {
+    let el = v && v.parentElement;
+    for (let n = 0; el && el !== document.body && n < 14; n++, el = el.parentElement) {
+      // Não subir até o contêiner do feed e pegar o post vizinho.
+      if (el.querySelectorAll("video").length > 1) break;
+      for (const attr of ["data-urn", "data-id", "data-activity-urn"]) {
+        const m = (el.getAttribute(attr) || "").match(/urn:li:activity:\d+/);
+        if (m) return "https://www.linkedin.com/feed/update/" + m[0] + "/";
+      }
+      const links = new Set();
+      el.querySelectorAll("a[href]").forEach(a => { const u = liCanonical(a.href); if (u) links.add(u); });
+      if (links.size === 1) return [...links][0];
+      if (links.size > 1) break;
+    }
+    return document.querySelectorAll("video").length === 1 ? liCanonical(location.href) : "";
+  }
+  const isLI = () => /(^|\.)linkedin\.com$/.test(location.hostname);
+
   function ttPostUrl(v) {
     const toUrl = (m) => `https://www.tiktok.com/${m[1]}/video/${m[2]}`;
     try {
@@ -540,6 +916,136 @@
     return location.href;
   }
 
+  /* YouTube fora do /watch (home, busca, canal, sidebar): a página é genérica — o vídeo certo é o
+     link do CARD que contém o player apontado (a prévia ao passar o mouse). Ambíguo → não inventa. */
+  function ytCardInfo(v) {
+    const idsIn = (node) => {                        // ids de vídeo distintos linkados dentro de um elemento
+      const ids = new Set();
+      node.querySelectorAll("a[href]").forEach((a) => {
+        let u;
+        try { u = new URL(a.getAttribute("href"), location.href); } catch (_) { return; }
+        let id = "";
+        if (/(^|\.)youtu\.be$/.test(u.hostname)) { const m = u.pathname.match(/^\/([\w-]{6,})/); id = m ? m[1] : ""; }
+        else if (/(^|\.)youtube\.com$/.test(u.hostname)) {
+          if (u.pathname === "/watch") id = u.searchParams.get("v") || "";
+          else { const m = u.pathname.match(/^\/(?:shorts|live|embed|clip)\/([\w-]{6,})/); id = m ? m[1] : ""; }
+        }
+        if (/^[\w-]{6,}$/.test(id)) ids.add(id);
+      });
+      return ids;
+    };
+    try {
+      for (let el = v, d = 0; el && el !== document.body && d < 16; el = el.parentElement, d++) {
+        if (el.querySelectorAll && el.querySelectorAll("video").length > 1) break;   // contêiner misturando cards
+        const ids = idsIn(el);
+        if (ids.size > 1) break;                                   // nunca adivinhar entre cards vizinhos
+        if (ids.size === 1) {
+          const id = [...ids][0];
+          // o primeiro ancestral com 1 link pode ser só o thumbnail: título/selo vivem no card-raiz (metadados)
+          let root = (v.closest && v.closest("ytd-rich-item-renderer, yt-lockup-view-model, ytd-rich-grid-media, ytd-video-renderer, ytd-compact-video-renderer, ytm-shorts-lockup-view-model, ytd-grid-video-renderer, ytd-reel-item-renderer")) || el;
+          if (root !== el && idsIn(root).size > 1) root = el;    // raiz com vídeos mistos: metadados ficam no el
+          const ttl = root.querySelector("#video-title, #video-title-link, h3 a, .yt-lockup-metadata-view-model-wiz__title, a.shortsLockupViewModelHostEndpoint");
+          const name = (ttl && ttl.textContent.trim().slice(0, 140)) || "";
+          // selo AO VIVO do card: classe de live, overlay-time-status=LIVE (estrutural) ou um selo
+          // cujo texto seja exatamente "AO VIVO"/"LIVE" — título com "live" no meio NÃO conta (replay de live encerrada é VOD)
+          const live = !!(root.querySelector('[class*="badge-style-type-live"], badge-shape[class*="live"], [class*="thumbnail-badge"][class*="live"], [class*="live-now"], [overlay-style="LIVE" i]')
+            || [...root.querySelectorAll("badge-shape, yt-thumbnail-badge-view-model, yt-badge-shape, [class*='badge'], [class*='overlay']")]
+                 .some((s) => { const tx = (s.textContent || "").trim(); return tx.length < 60 && /^(ao[- ]?vivo|aovivo|live)\b/i.test(tx); })
+            || (ttl && /\bao[- ]?vivo\b|\baovivo\b/i.test(ttl.textContent)));
+          return { url: `https://www.youtube.com/watch?v=${id}`, title: name, live };
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /* Feeds de outros sites (Vimeo, Dailymotion, Twitch, blogs...): o link de mídia do próprio card
+     vence o endereço genérico da página. Mesma regra de ambiguidade: 1 link de mídia ou nada. */
+  const CARD_MEDIA_RE = /^\/(?:watch|video|videos|clip|clips|pin|reel|reels|tv|shorts|live|embed|media|post|posts|e|v)\/|^\/\d{5,}\/?$|^\/[\w.-]+\/(?:videos?|clip|status)\/|\.ghtml?$/i;   // .ghtml = matéria da Globo
+  function genericCardUrl(v) {
+    try {
+      for (let el = v, d = 0; el && el !== document.body && d < 14; el = el.parentElement, d++) {
+        if (el.querySelectorAll && el.querySelectorAll("video").length > 1) break;
+        const links = new Set();
+        el.querySelectorAll("a[href]").forEach((a) => {
+          try {
+            const u = new URL(a.getAttribute("href"), location.href);
+            if (u.hostname === location.hostname && CARD_MEDIA_RE.test(u.pathname)) links.add(u.origin + u.pathname);
+          } catch (_) {}
+        });
+        if (links.size === 1) return [...links][0];
+        if (links.size > 1) break;
+      }
+    } catch (_) {}
+    return "";
+  }
+
+  /* YouTube /watch de uma live: selo AO VIVO nos controles do player ou badge nos metadados
+     (a classe exata varia entre layouts — checa classe e o próprio texto do selo). */
+  function ytWatchLive() {
+    try {
+      if (document.querySelector(".ytp-live")) return true;
+      for (const b of document.querySelectorAll('ytd-watch-metadata [class*="badge"], ytd-watch-flexy [class*="badge"], #info ytd-badge-supported-renderer, ytd-badge-supported-renderer[class*="live"], badge-shape[class*="live"]')) {
+        const c = String(b.getAttribute && b.getAttribute("class") || "");
+        if (/live/i.test(c)) return true;
+        if (/^\s*(ao vivo|live|ao[- ]?vivo)\s*$/i.test(b.textContent || "")) return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /* "Esta página é uma transmissão ao vivo?" — usado pelo popup, que não enxerga o DOM.
+     Sinal universal: live não tem duração finita — o <video> reporta duration === Infinity
+     (YouTube, Twitch, Facebook, Vimeo, Globo, qualquer player MSE/HLS). */
+  function pageIsLive() {
+    try {
+      const v = (state.video && state.video.isConnected) ? state.video : document.querySelector("video");
+      if (v && v.isConnected && v.duration === Infinity) return true;
+      if (isYT() && ytWatchLive()) return true;
+      if (/(^|\.)globo\.com$/.test(location.hostname) && state.video && cardIsLive(state.video)) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  /* O card tem selo "AO VIVO"? (Globo: o player da home já está transmitindo — o vídeo certo é o
+     stream HLS mestre, não a página da matéria, que só traz os clipes sob demanda.) */
+  function cardIsLive(v) {
+    try {
+      for (let el = v, d = 0; el && el !== document.body && d < 10; el = el.parentElement, d++) {
+        if (el.querySelectorAll && el.querySelectorAll("video").length > 1) break;   // contêiner de vários cards: pare
+        if (/\bao[- ]?vivo\b|\baovivo\b/i.test((el.textContent || "").slice(0, 4000))) return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /* Endereços de feed/listagem de sites conhecidos NÃO identificam um vídeo — enviar isso ao motor
+     baixaria um vídeo qualquer (foi o bug do youtube.com/ no feed). O servidor recusa também. */
+  function isGenericFeedUrl(raw) {
+    try {
+      const u = new URL(raw, location.href);
+      const h = u.hostname.toLowerCase();
+      const p = u.pathname, seg = p.split("/")[1] || "", root = p === "/" || p === "";
+      if (/(^|\.)youtu\.be$/.test(h)) return root;
+      if (/(^|\.)youtube\.com$/.test(h)) return root || /^(feed|results|gaming|music|premium|kids|playlist|playlists|hashtag|channel|user|show|live|podcasts)/i.test(seg) || seg.startsWith("@");
+      if (/(^|\.)linkedin\.com$/.test(h)) return root || /^\/feed\/?$/i.test(p);     // /feed/update/urn:li:... já É um post
+      if (/(^|\.)tiktok\.com$/.test(h)) return root || /^(foryou|following|discover|explore|search)$/i.test(seg);
+      if (/(^|\.)instagram\.com$/.test(h)) return root || /^\/(explore|reels)\/?$/i.test(p);
+      if (/(^|\.)(x|twitter)\.com$/.test(h)) return root || /^(home|explore|i)$/i.test(seg);
+      if (/(^|\.)facebook\.com$/.test(h)) return root || /^\/(watch|reel|video|stories|marketplace|groups)\/?$/i.test(p);
+      if (/(^|\.)pinterest\.[a-z.]+$/.test(h)) return root || /^(ideas|today|search)/i.test(seg);
+      if (/(^|\.)vimeo\.com$/.test(h)) return root || /^(categories|channels|groups|feed|watch|upgrade|features|blog|ondemand)/i.test(seg);
+      if (/(^|\.)dailymotion\.com$/.test(h)) return root || !/^\/video\//i.test(p);
+      if (/(^|\.)dai\.ly$/.test(h)) return root;
+      if (/(^|\.)twitch\.tv$/.test(h)) return root || /^(directory|p|downloads|jobs|turbo|prime)/i.test(seg) || /\/videos\/?$/i.test(p);
+      if (/(^|\.)globo\.com$/.test(h)) {        // g1, ge, gshow...: matéria é .ghtml; home e seções (terminam em /) são listagem
+        if (/(^|\.)globoplay\./.test(h)) return root || !/^\/v\/\d+/i.test(p);
+        return root || (/\/$/.test(p) && !/\.ghtml?$/i.test(p));
+      }
+      return false;
+    } catch (_) { return false; }
+  }
+
   /* ------------------------------------------------------------------- thumb */
   function pageThumb() {
     const yt = ytId();
@@ -611,7 +1117,7 @@
     const push = (url, kind, own, title, pri) => {
       if (!url || !/^https?:/i.test(url)) return;
       if (seen.has(url)) return;
-      const pg = kind === "TikTok" || kind === "Instagram" || kind === "Facebook" || kind === "Vimeo" || kind === "Página" || kind === "X" || kind === "Pinterest";      // URL da PÁGINA do vídeo (yt-dlp)
+      const pg = kind === "LinkedIn" || kind === "TikTok" || kind === "Instagram" || kind === "Facebook" || kind === "Vimeo" || kind === "Página" || kind === "X" || kind === "Pinterest";      // URL da PÁGINA do vídeo (yt-dlp)
       if (!pg) { try { if (FRAG_HOST_RE.test(new URL(url).hostname)) return; } catch (_) { return; } }
       seen.add(url);
       const it = { url, kind: kind || "Player", title: title || document.title };
@@ -650,7 +1156,7 @@
     }
     // Player com blob:/MSE (Vimeo e muitos outros) em site SEM tratamento próprio: não existe URL de arquivo para listar,
     // então o item é o endereço da PÁGINA (o yt-dlp resolve), com o quadro do próprio vídeo de miniatura.
-    if (!isIG() && !isTT() && !isX() && !isYT() && !isFB() && !isPin() && !items.some((i) => i.kind === "Rede" || i.kind === "HTML5" || i.kind === "Globo/G1" || i.kind === "Embed")) {
+    if (!isLI() && !isIG() && !isTT() && !isX() && !isYT() && !isFB() && !isPin() && !items.some((i) => i.kind === "Rede" || i.kind === "HTML5" || i.kind === "Globo/G1" || i.kind === "Embed")) {
       const bv = vids.find((v) => {
         const r = v.getBoundingClientRect();
         const src = v.currentSrc || v.src || "";
@@ -679,6 +1185,16 @@
           own = c === "-" ? "" : c;
         }
         push(u, "TikTok", own, document.title, v.paused ? 1 : 2);
+      });
+    }
+    if (isLI()) {
+      vids.forEach(v => {
+        const u = liPostUrl(v), media = liMedia(v);
+        if (!u && !media) return;
+        push(u || media, "LinkedIn", frameOf(v) || v.poster || "", document.title, v.paused ? 1 : 2);
+        const item = items.find(i => i.url === (u || media));
+        if (item && u && media) item.fallbackStream = media;
+        if (item && liManifest(v)) item.linkedinManifest = liManifest(v);
       });
     }
     if (isFB()) {
@@ -772,14 +1288,15 @@
       // "closed": o JavaScript da página não enxerga nem mexe no painel, nos botões e nos avisos
       const root = host.attachShadow({ mode: "closed" });
       root.innerHTML = `<style>${STYLE}</style>
-        <button class="fab" type="button" title="${esc(t("fabTitle"))}" aria-label="${esc(t("fabTitle"))}">${BRAND_SVG}</button>
-        <div class="panel" role="dialog" aria-label="Noe VFX Downloader"></div>
+        <button class="fab" type="button" aria-haspopup="dialog" aria-controls="download-panel" aria-expanded="false" title="${esc(t("fabTitle"))}" aria-label="${esc(t("fabTitle"))}">${BRAND_SVG}</button>
+        <div class="panel" id="download-panel" role="dialog" aria-label="Noe VFX Downloader"></div>
         <div class="toast" role="status" aria-live="polite"></div>`;
       state.host = host;
       state.root = root;
       state.fab = root.querySelector(".fab");
       state.panel = root.querySelector(".panel");
       state.toastEl = root.querySelector(".toast");
+      state.toastEl.addEventListener("pointerdown", onToastDown, true);   // a pilula inteira é alça de arrasto
 
       state.fab.addEventListener("pointerdown", onFabDown, true);
       state.fab.addEventListener("click", onFabClick, true);
@@ -796,11 +1313,31 @@
     if (state.host) { try { ensureHost(); } catch (_) {} }
   });
 
-  function place(videoEl) {
+  /* <video> morto: a página reciclou/removeu o elemento (SPA do YouTube faz isso o tempo todo).
+     Sem isso o drag "trava" no canto: rect zerado → clamp força (0,0) e nunca sai. */
+  const videoGone = (v) => {
+    try {
+      if (!v || !v.isConnected) return true;
+      const r = v.getBoundingClientRect();
+      return r.width < 150 || r.height < 90;
+    } catch (_) { return true; }
+  };
+
+  function place(videoEl, followScroll = false) {
     if (!fabOn()) return false;
+    const owner = videoEl.closest(YT_CARD_SEL) || videoEl;
+    if (!followScroll && state.fabOwner === owner && state.fab?.style.display === "inline-flex") return true;
     const rect = videoEl.getBoundingClientRect();
     if (!rect || rect.width < 150 || rect.height < 90) return false;
     if (rect.bottom < 0 || rect.top > innerHeight) return false;
+    /* card = canto fixo da miniatura: nada de posição salva — a mesma razão em âncoras de
+       tamanhos diferentes era o que fazia o ícone "pegar uma posição e pular" depois.
+       No player principal a posição arrastada segue valendo (e o 1º place espera o storage). */
+    const isCard = !!(state.cardEl && videoEl === state.cardEl);
+    if (!state.posReady) {          // storage ainda não voltou: posiciona 1x quando voltar — sem o "aparece e se desloca"
+      state.pendingAnchor = videoEl;
+      return true;
+    }
     if (!ensureHost()) return false;
 
     const f = state.fab;
@@ -811,16 +1348,15 @@
     const availW = Math.max(0, rect.width - FAB_SIZE);
     const availH = Math.max(0, rect.height - FAB_SIZE);
 
-    // primeira vez: define a posição inicial e JÁ GRAVA, para o ícone nunca "pular" depois
-    let pos = state.pos;
+    let pos = isCard ? state.cardPos : state.pos;
     if (!pos) {
-      const dTop = rect.top + (isYT() ? 62 : 12);
-      const dLeft = rect.right - FAB_SIZE - 12;
+      const dTop = rect.top + (isCard || rect.height < 140 ? 8 : (isYT() ? 62 : 12));   // card/miniatura baixa: canto superior; player alto: abaixo da barra do YT
+      const dLeft = isCard ? rect.left + 8 : rect.right - FAB_SIZE - 12;
       pos = [
         Math.min(1, Math.max(0, (dLeft - rect.left) / Math.max(1, availW))),
         Math.min(1, Math.max(0, (dTop - rect.top) / Math.max(1, availH)))
       ];
-      if (state.posReady) persistPos(pos);
+
     }
 
     let left = rect.left + pos[0] * availW;
@@ -830,16 +1366,19 @@
     left = Math.min(Math.max(8, left), Math.max(8, innerWidth - FAB_SIZE - 8));
     top = Math.min(Math.max(8, top), Math.max(8, innerHeight - FAB_SIZE - 8));
 
+    state.fabOwner = owner;
     f.style.left = `${Math.round(left)}px`;
     f.style.top = `${Math.round(top)}px`;
 
-    if (state.panelOpen) positionPanel(f.getBoundingClientRect());
+    if (state.panelOpen) positionPanel();
     return true;
   }
 
-  function positionPanel(anchor) {
+  function positionPanel() {
+    const f = state.fab;
+    const anchor = { left:f.offsetLeft, right:f.offsetLeft + f.offsetWidth, top:f.offsetTop };
     const p = state.panel;
-    const w = 268;
+    const w = p.offsetWidth;
     const gap = 8;
     const h = p.offsetHeight || 240;
 
@@ -855,11 +1394,17 @@
     p.style.top = `${Math.round(t)}px`;
   }
 
+  function cardHovered() {                        // cursor segue dentro do card ancorado (a miniatura é filha dele)
+    const c = state.cardEl && state.cardEl.closest ? state.cardEl.closest(YT_CARD_SEL) : null;
+    return !!(c && c.matches(":hover"));
+  }
+
   function scheduleHide() {
     clearTimeout(state.hideT);
     state.hideT = setTimeout(() => {
       if (state.panelOpen) return;
-      if (state.fab && state.fab.matches(":hover")) return;
+      if (state.fab && state.fab.matches(":hover, :focus-visible")) return;
+      if (cardHovered()) return;
       hideFab();
     }, 700);
   }
@@ -868,7 +1413,8 @@
     clearTimeout(state.idleT);
     state.idleT = setTimeout(() => {
       if (state.panelOpen || state.dragging) return;
-      if (state.fab && (state.fab.matches(":hover") || state.panel.matches(":hover"))) return;
+      if (state.fab && (state.fab.matches(":hover, :focus-visible") || state.panel.matches(":hover"))) return;
+      if (cardHovered()) return;                  // FAB ancorado no card não some enquanto o usuário mira nele
       hideFab();
     }, 2000);
   }
@@ -877,9 +1423,25 @@
     if (state.fab) state.fab.style.display = "none";
   }
 
-  function closePanel() {
+  function openPanel() {
+    const p = state.panel;
+    positionPanel();
+    // morph: o painel cresce a partir do centro do FAB — origem = botão relativo ao painel posicionado
+    const pl = parseFloat(p.style.left) || 0, pt = parseFloat(p.style.top) || 0;
+    p.style.transformOrigin = `${Math.round(state.fab.offsetLeft + state.fab.offsetWidth / 2 - pl)}px ${Math.round(state.fab.offsetTop + state.fab.offsetHeight / 2 - pt)}px`;
+    p.classList.add("is-open");
+    state.panelOpen = true;
+    state.fab.setAttribute("aria-expanded", "true");
+    p.querySelector("[data-quality]")?.focus({preventScroll:true});
+    if (state.fab) state.fab.classList.add("morphed");   // o botão vira o painel: some junto
+  }
+
+  function closePanel(restoreFocus = false) {
+    state.fab?.setAttribute("aria-expanded", "false");
+    if (restoreFocus) state.fab?.focus({preventScroll:true});
     state.panelOpen = false;
-    if (state.panel) state.panel.style.display = "none";
+    if (state.panel) state.panel.classList.remove("is-open");
+    if (state.fab) state.fab.classList.remove("morphed");
   }
 
   /* ------------------------------------------------------------------ drag -- */
@@ -906,8 +1468,10 @@
       const dy = ev.clientY - startY;
       if (!state.dragMoved && Math.abs(dx) + Math.abs(dy) < 4) return;
       state.dragMoved = true;
+      if (Math.abs(dx) + Math.abs(dy) >= 10) state.dragBig = true;   // arrasto de verdade: só isso vira posição salva
 
-      const vr = state.video ? state.video.getBoundingClientRect() : null;
+      const anc = state.video || state.cardEl;
+      const vr = videoGone(anc) ? null : anc.getBoundingClientRect();                  // âncora morta não aprisiona o ícone
       let left = ev.clientX - offX;
       let top = ev.clientY - offY;
       if (vr) {
@@ -916,6 +1480,8 @@
         left = Math.min(Math.max(vr.left, left), maxL);
         top = Math.min(Math.max(vr.top, top), maxT);
       }
+      left = Math.min(Math.max(8, left), Math.max(8, innerWidth - FAB_SIZE - 8));       // tela sempre limita
+      top = Math.min(Math.max(8, top), Math.max(8, innerHeight - FAB_SIZE - 8));
       fab.style.left = `${Math.round(left)}px`;
       fab.style.top = `${Math.round(top)}px`;
     };
@@ -926,7 +1492,8 @@
       document.removeEventListener("pointercancel", up, true);
       fab.style.cursor = "grab";
       state.dragging = false;
-      if (state.dragMoved) savePos();
+      if (state.dragBig) savePos();                    // clique com tremidinha não grava posição errada
+      state.dragBig = false;
       armIdle();
       setTimeout(() => { state.dragMoved = false; }, 60);
     };
@@ -940,16 +1507,19 @@
   document.addEventListener(
     "mouseover",
     (e) => {
+      if (!e.isTrusted) return;                        // eventos sintéticos (pageProgramTitle) não devem religar o FAB
       const t = e.target;
       if (!t || t.nodeType !== 1) return;
       const v = t.tagName === "VIDEO" ? t : (t.closest && t.closest("video"));
-      if (!v) return;
-      state.video = v;
+      if (!v || state.panelOpen || state.dragging) return;
+      const card = cardElAt(t);
+      state.cardEl = card;
+      state.video = card ? null : v;
       publish(false);
       if (!fabOn()) { hideFab(); return; }
       clearTimeout(state.hideT);
       loadPos();
-      if (place(v)) armIdle();
+      if (place(card || v)) armIdle();
       else hideFab();
     },
     true
@@ -1011,20 +1581,43 @@
     return best;
   }
 
+  const YT_CARD_SEL = "ytd-rich-item-renderer, ytd-rich-grid-media, yt-lockup-view-model, ytd-video-renderer, ytd-compact-video-renderer, ytm-shorts-lockup-view-model, ytd-grid-video-renderer, ytd-reel-item-renderer";
+  /* Card do YouTube sob o cursor em página de lista (home/Ao vivo/busca/canal). A aba "Ao vivo"
+     não solta preview de vídeo no hover, então um FAB que só ancora em <video> nunca aparecia. */
+  function cardElAt(t) {
+    if (!isYT()) return null;                          // /watch também: os cards da lateral são ytd-compact-video-renderer
+    const c = t && t.closest && t.closest(YT_CARD_SEL);
+    if (!c) return null;
+    if (!c.querySelector('a[href*="/watch"],a[href*="/live/"],a[href*="/shorts/"],a[href*="/clip/"]')) return null;
+    return c.querySelector("ytd-thumbnail, #thumbnail") || c;   // âncora = a MINIATURA: o FAB fica no canto da imagem, não em cima do título
+  }
+
   document.addEventListener(
     "mousemove",
     (e) => {
-      if (state.dragging || !fabOn()) return;
+      if (state.panelOpen || state.dragging || !fabOn() || !e.isTrusted) return;   // sintético não ancora nem acorda o FAB
       const n = Date.now();
       if (n - state.lastMove < 110) return;
       state.lastMove = n;
       if (e.target === state.host) return;
 
+      const c = cardElAt(e.target);          // card PRIMEIRO: a âncora é sempre a miniatura — o <video> de preview
+      if (c) {                               // nasce dentro do mesmo card e não arranca o FAB do lugar (era o "pulando")
+        if (c !== state.cardEl && state.panelOpen) return;   // painel aberto não troca de alvo no meio
+        state.video = null;
+        state.cardEl = c;
+        clearTimeout(state.hideT);
+        loadPos();
+        if (place(c)) { armIdle(); return; }
+        state.cardEl = null;
+      }
       const v = videoAt(e.clientX, e.clientY);
       if (!v) {
-        if (state.video && !state.panelOpen) scheduleHide();
+        state.cardEl = null;
+        if (state.fab && state.fab.style.display === "inline-flex" && !state.panelOpen) scheduleHide();
         return;
       }
+      state.cardEl = null;
       if (v !== state.video) {
         if (state.panelOpen) return;              // não troca de vídeo com o menu aberto
         state.video = v;
@@ -1043,11 +1636,14 @@
   document.addEventListener(
     "mouseout",
     (e) => {
+      if (!e.isTrusted) return;
       const t = e.target;
       if (!t || t.nodeType !== 1) return;
       const v = t.tagName === "VIDEO" ? t : (t.closest && t.closest("video"));
       if (!v) return;
       if (e.relatedTarget === state.host) return;
+      const card = state.cardEl && state.cardEl.closest ? state.cardEl.closest(YT_CARD_SEL) : null;
+      if (card && card.matches(":hover")) return;   // saiu do <video> de preview mas segue no card: o FAB fica
       scheduleHide();
     },
     true
@@ -1058,9 +1654,12 @@
     if (state.dragging || scrollRaf) return;
     scrollRaf = requestAnimationFrame(() => {       // no máximo 1 reposicionamento por quadro
       scrollRaf = 0;
-      if (state.video && state.fab && state.fab.style.display === "inline-flex") {
-        place(state.video);
-        armIdle();
+      const anc = state.video || state.cardEl;
+      if (anc && state.fab && state.fab.style.display === "inline-flex") {
+        if (place(anc, true)) armIdle();
+        else hideFab();                       // âncora sumiu/saiu da tela: ícone órfão não fica flutuando
+      } else if (state.fab && state.fab.style.display === "inline-flex" && videoGone(anc)) {
+        hideFab();
       }
     });
   }, { passive: true });
@@ -1070,7 +1669,7 @@
     if (state.panelOpen && e.target !== state.host) { closePanel(); scheduleHide(); }
   }, true);
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && state.panelOpen) { closePanel(); scheduleHide(); }
+    if (e.key === "Escape" && state.panelOpen) { e.preventDefault(); e.stopPropagation(); closePanel(true); }
   }, true);
 
   /* --------------------------------------------------------------- painel UI */
@@ -1086,6 +1685,7 @@
         ${BRAND_SVG}
         <b>${t("saveVideo")}</b>
         <span class="brand">NOÉ VFX</span>
+        <button type="button" class="x" data-x aria-label="${esc(t("cancel"))}" title="${esc(t("cancel"))}">✕</button>
       </div>
       <div class="dest">
         <span>📁</span>
@@ -1112,6 +1712,10 @@
       </div>
     `;
 
+    state.panel.querySelector("[data-x]").addEventListener("click", (e) => {
+      e.stopPropagation(); if (!e.isTrusted) return;
+      closePanel(true);                       // ✕ explícito: clicar fora não é obrigatório
+    });
     state.panel.querySelector("[data-quality]").value = quality === "audio" ? "best" : quality;
     state.panel.querySelector("[data-quality]").addEventListener("click", e=>e.stopPropagation());
     state.panel.querySelector("[data-audio]").addEventListener("click",e=>{e.stopPropagation();if(!e.isTrusted)return;closePanel();hideFab();startOne("best","",true);});
@@ -1151,7 +1755,11 @@
       closePanel();
       hideFab();
       const found=scan().items;
-      await sendMsg({type:"OPEN_COLLECTION",seed:{items:found.map(it=>({url:it.url,title:it.title||"",referer:location.href})),quality:state.panel.querySelector("[data-quality]").value}});
+      // página com playlist (watch?v&list= ou /playlist): manda a URL — a janela lê e lista todos os itens.
+      // página de vídeo comum sem playlist: manda o próprio vídeo, para a janela nunca abrir vazia.
+      const pl = globalThis.NVFCollection ? NVFCollection.playlistUrl(location.href, true) : "";
+      const pg = !pl && isYT() && ytId() ? location.href : "";
+      await sendMsg({type:"OPEN_COLLECTION",seed:{url:pl||pg,items:found.map(it=>({url:it.url,title:it.title||"",referer:location.href})),quality:state.panel.querySelector("[data-quality]").value}});
     }));
 
     if (state.panel.querySelector("[data-compat]")) state.panel.querySelector("[data-compat]").addEventListener("change", async (e) => {
@@ -1175,10 +1783,7 @@
         return;
       }
       renderPanel();
-      const p = state.panel;
-      p.style.display = "block";
-      state.panelOpen = true;
-      positionPanel(state.fab.getBoundingClientRect());
+      openPanel();
     });
   }
 
@@ -1198,21 +1803,317 @@
     }
     if (state.panelOpen) { closePanel(); return; }
     renderPanel();
-    state.panelOpen = true;
-    state.panel.style.display = "block";
-    positionPanel(state.fab.getBoundingClientRect());
+    openPanel();
     publish(true);
   }
 
   /* --------------------------------------------------------------- downloads */
+  // A pilula é um mini centro de downloads: com jobs ativos mostra etapa/fila/cancelar;
+  // sem jobs, exibe o aviso transitório de sempre (toast).
+  const CHECK_SVG = '<svg viewBox="0 0 48 48" fill="none"><path d="M10 26l9 9 19-22" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function mkCheck() {                                   // success-check: o ✓ desenha na entrada do aviso "salvo"
+    const s = document.createElement("span");
+    s.className = "t-check"; s.dataset.state = "in"; s.setAttribute("aria-hidden", "true");
+    s.innerHTML = CHECK_SVG;
+    return s;
+  }
   function toast(text, kind, ms) {
     if (!ensureHost()) return;
-    const t = state.toastEl;
-    t.textContent = text;
-    t.className = "toast" + (kind ? " " + kind : "");
-    t.style.display = "block";
+    state.notice = { text: String(text), kind: kind || "", until: ms === 0 ? Infinity : Date.now() + (ms || 4200) };
     clearTimeout(state.toastT);
-    if (ms !== 0) state.toastT = setTimeout(() => { t.style.display = "none"; }, ms || 4200);
+    if (ms !== 0) state.toastT = setTimeout(renderJobs, ms || 4200);     // re-renderiza: esconde o aviso expirado
+    renderJobs();
+  }
+
+  const ACTIVE_J = new Set(["queued", "downloading", "merging", "stopping"]);
+
+  function jobName(j) {
+    const ttl = String(j.title || "").replace(/^\(\d+\)\s*/, "").trim();   // "(2) YouTube" → "YouTube"
+    if (ttl) return ttl.slice(0, 64);
+    try { return new URL(j.url || "").hostname.replace(/^www\./, ""); } catch (_) { return "download"; }
+  }
+
+  function stageLine(j) {
+    if (j.status === "queued") return t("queuedWait");
+    if (j.status === "merging") return t("mergingShort");
+    if (j.status === "stopping") return j.live ? t("stoppingSave") : t("canceling");
+    if (j.status === "downloading") {
+      if (j.live) {                                   // live não tem %: mostra tempo gravado — o botão é o "parar e salvar"
+        const s = Math.max(0, Math.round(Date.now() / 1000 - (j.started || Date.now() / 1000)));
+        return t("recordingFor", s >= 60 ? `${Math.floor(s / 60)}min ${String(s % 60).padStart(2, "0")}s` : `${s}s`);
+      }
+      const p = String(j.progress || "");
+      if (/^\d+(\.\d+)?%$/.test(p)) return t("downloadingP", p + (j.speed ? " • " + j.speed : ""));
+      if (p) return p;                                  // "unindo", "convertendo para H.264 45%", "tentando modo compatível"... vem pronto do servidor
+      return t("downloading0");
+    }
+    if (j.status === "done") return t("savedInShort", folderName(j.output_dir || "") || "✓");
+    if (j.status === "canceled") return t("canceledMsg");
+    if (j.status === "error") return t("errShort", String(j.error || "-").slice(0, 90));
+    return String(j.status || "");
+  }
+
+  function showToastMessage(container, note) {
+    const message = document.createElement("span");
+    message.className = "toast-message";
+    const label = document.createElement("span");
+    label.className = "toast-message-text";
+    label.textContent = note.text;
+    message.title = note.text;
+    if (note.kind === "ok") message.appendChild(mkCheck());
+    message.appendChild(label);
+    container.replaceChildren(message);
+  }
+
+  function renderJobs() {
+    const jobs = state.jobs || [];
+    const el = (state.toastEl && state.toastEl.isConnected) ? state.toastEl
+             : (jobs.length ? ensureHost() && state.toastEl : null);   // recém-carregada (ou página que removeu o host): remonta a pilula
+    if (!el) return;
+    const wasOpen = el.classList.contains("is-open");   // lê ANTES: o className é reconstruído abaixo e apagaria a marca
+    tickLive();                                   // relógio da live anda a cada segundo, independente do poll
+    if (jobs.some(j => !state.jobRows.has(j.id)) && !state.notice?.kind) state.notice = null;
+    const note = state.notice && state.notice.until > Date.now() ? state.notice : null;
+    if (!jobs.length) {
+      el.dataset.mode = "";
+      state.jobRows.clear();
+      pendingStop.clear();                            // lista esvaziou: nenhum "parando" fica pendurado
+      state.jobsOpen = false;
+      el.className = "toast" + (wasOpen ? " is-open" : "") + (note && note.kind ? " " + note.kind : "");
+      if (note) {
+        if (el._note !== note) {                        // aviso novo: monta UMA vez (o ✓ e o shake não repetem a cada poll)
+          el._note = note;
+          showToastMessage(el, note);
+          if (note.kind === "err" && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+            // error-shake via WAAPI: classe não presta aqui — o className é reconstruído a cada poll e truncaria o tremor
+            const cs = getComputedStyle(el);
+            const num = (n, fb) => { const v = parseFloat(cs.getPropertyValue(n)); return Number.isFinite(v) ? v : fb; };
+            const ease = cs.getPropertyValue("--shake-ease").trim() || "cubic-bezier(.22,1,.36,1)";
+            const d = num("--shake-distance", 6), o = num("--shake-overshoot", 4);
+            el.animate([
+              { translate: "0 0", easing: ease, offset: 0 },
+              { translate: `${d}px 0`,  easing: ease, offset: 0.2857 },
+              { translate: `-${d}px 0`, easing: ease, offset: 0.5714 },
+              { translate: `${o}px 0`,  easing: ease, offset: 0.7857 },
+              { translate: "0 0", offset: 1 },
+            ], { duration: num("--shake-dur", 280) });
+          }
+        }
+        if (!wasOpen) void el.offsetWidth;   // pinta o fechado 1º: a animação de surgir roda na abertura (não a cada poll)
+        el.classList.add("is-open");
+      } else { el._note = null; el.classList.remove("is-open"); }
+      applyToastPos();
+      return;
+    }
+    if (el.dataset.mode !== "jobs") {                   // monta o esqueleto do widget uma vez por sessão de jobs
+      el.dataset.mode = "jobs";
+      el._note = null;                                  // note antigo não vale mais: ao voltar sem jobs, remonta do zero
+      el._noteTxt = null;                               // mesma coisa pro rodapé .j-note (remonta o ✓ junto)
+      state.jobRows.clear();
+      el.innerHTML = `<div class="j-sum" role="button" tabindex="0"><svg class="j-caret" viewBox="0 0 16 16" aria-hidden="true"><path d="m2 11 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="j-sumtxt"><span class="j-dot" style="display:none"></span><span class="j-sumt"></span></span></div><div class="j-list t-stack"></div><div class="j-note"></div>`;
+      const sum = el.querySelector(".j-sum");
+      const toggle = () => { if (state.toastMoved) return; state.jobsOpen = !state.jobsOpen; renderJobs(); };
+      sum.addEventListener("click", (event) => { event.stopPropagation(); toggle(); });
+      el.querySelector(".j-list").addEventListener("click", (event) => {
+        if (!event.target.closest("button") && state.jobs.length > 1) toggle();
+      });
+      sum.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+    }
+    const single = jobs.length === 1;
+    if (single) state.jobsOpen = false;                   // 1 job: a linha É a pilula — sem cabeçalho duplicado nem expandir
+    el.className = "toast jobs" + (wasOpen ? " is-open" : "") + ((state.jobsOpen && !single) ? " spread" : "") + (note && note.kind ? " " + note.kind : "");
+    const sum = el.querySelector(".j-sum");
+    sum.style.display = single ? "none" : "";
+    sum.title = t("toggleJobs");
+    sum.setAttribute("aria-label", sum.title);
+    sum.setAttribute("aria-expanded", String(!single && state.jobsOpen));
+    const qd = jobs.filter(j => j.status === "queued").length;
+    const act = jobs.length - qd;
+    el.querySelector(".j-dot").style.display = jobs.some(j => j.live) ? "" : "none";   // live rolando: bolinha pulsando (nó fixo, não reinicia)
+    el.querySelector(".j-sumt").textContent = `${act ? t("runningN", act) : ""}${act && qd ? " · " : ""}${qd ? t("queuedN2", qd) : ""}`;
+    const list = el.querySelector(".j-list");
+    // Retire os nós encerrados antes de reordenar: o vizinho conserva seu transform inicial.
+    for (const [id, row] of state.jobRows) {
+      if (!jobs.some(job => job.id === id)) { row.remove(); state.jobRows.delete(id); pendingStop.delete(id); }
+    }
+    jobs.forEach((job, i) => {
+      const j = pendingStop.has(job.id) && !job.finalText ? {...job, status:"stopping"} : job;
+      //   // cancel já clicado: segura o estado até o servidor confirmar
+      let row = state.jobRows.get(j.id);
+      if (!row) {
+        row = document.createElement("div");
+        row._enter = true;                              // banner-stacking: card novo sobe 60px ao entrar (reflow+release no fim)
+        // slots persistentes dentro de .j-stage: shimmer/pulse/dots são CSS-animation — nó criado 1x não reinicia a cada poll
+        row.innerHTML = `<div class="j-cell"><div class="j-name"></div><div class="j-stage"><span class="j-live" style="display:none"><i></i><span class="j-shim"></span></span><span class="j-txt"></span><span class="j-dots" style="display:none"><i></i><i></i><i></i></span></div><div class="j-bar"><i></i></div></div><button type="button" class="j-x">✕</button>`;
+        const armedAt = performance.now();     // guarda anti-fantasma: clique nos primeiros 400ms = linha recém-materializada sob o cursor
+        row.querySelector(".j-x").addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (!e.isTrusted) return;                          // mesmo padrão dos demais botões: evento sintético nunca cancela
+          if (performance.now() - armedAt < 400) return;
+          pendingStop.add(j.id);               // marca até o servidor confirmar — o poll traz "downloading" ainda e reverteria a tela
+          setTimeout(() => { if (pendingStop.delete(j.id)) renderJobs(); }, 90000);   // trava total: solta a linha em 90s
+          renderJobs();
+          sendMsg({ type: "CANCEL", jobId: j.id, src: "pill" }, 50000).then(async (r) => {   // ≥ timeout do background (45s): parada+resgate podem demorar
+            if (r && r.ok) return;
+            while (jobsPolling) await new Promise((x) => setTimeout(x, 60));   // espera o poll em voo antes de julgar
+            await pollJobs();                  // recusado: o job pode ter acabado sozinho — reconfere a verdade
+            if (!(state.jobs || []).find((x) => x.id === j.id)) return;   // saiu da lista = já tinha terminado
+            pendingStop.delete(j.id);          // falhou de verdade: tira o "stopping" e devolve o botão pra tentar de novo
+            if (!(r && r.stale)) { row._errorUntil = Date.now() + 5000; }   // stale = contexto morto; o aviso de F5 já aparece
+            renderJobs();
+          }).catch(() => {});
+        });
+        state.jobRows.set(j.id, row);
+      }
+      row.className = "j-row t-stack-banner" + (j.retiring ? " retiring" : "") + (j.live ? " live" : "") + (row._enter ? " is-enter" : "");
+      row.style.setProperty("--layer", String(i));
+      row.inert = i > 0 && !state.jobsOpen;
+      row.dataset.depth = String(i);                        // banner-stacking: frente visível, próximos espiam por cima
+      const x = row.querySelector(".j-x");     // o botão guarda a classe .j-x pra sempre — trocar className inteiro quebrava o seletor e matava o render
+      if (j.live && j.status !== "queued") { x.textContent = t("stopSave"); x.classList.add("j-stop"); x.title = t("stopSave"); }
+      else { x.textContent = "✕"; x.classList.remove("j-stop"); x.title = t("cancel"); }   // live na fila ainda não grava nada: ✕ simples
+      const stopping = j.status === "stopping" || (j.live && j.status === "merging");   // merging em live = resgate rodando: clicar mataria o salvamento
+      x.style.pointerEvents = stopping ? "none" : "";
+      x.style.opacity = stopping ? ".45" : "";
+      x.disabled = stopping || !!j.finalText;                             // pointerEvents não cobre teclado (Enter/Espaço no botão focado)
+      row.querySelector(".j-name").textContent = jobName(j);
+      const st = row.querySelector(".j-stage");
+      const txt = st.querySelector(".j-txt"), line = j.finalText || (row._errorUntil > Date.now() ? t("cancelFail") : stageLine(j));
+      if (j.status === "stopping") {                    // shimmer no "parando e salvando" + pontinhos do processo
+        txt.classList.add("j-shim");
+        if (txt.textContent !== line) { txt.textContent = line; txt.dataset.text = line; }
+        st.querySelector(".j-dots").style.display = "";
+      } else {
+        if (txt.classList.contains("j-shim")) { txt.classList.remove("j-shim"); delete txt.dataset.text; }
+        if (txt.textContent !== line) txt.textContent = line;
+        st.querySelector(".j-dots").style.display = "none";
+      }
+      const b = st.querySelector(".j-live");            // selo ● AO VIVO antes do "gravando há Xmin" — nó fixo: shimmer contínuo
+      b.style.display = j.live && !j.finalText ? "" : "none";
+      if (j.live) {
+        const sh2 = b.querySelector(".j-shim"), lb = t("liveBadge");
+        if (sh2.textContent !== lb) { sh2.textContent = lb; sh2.dataset.text = lb; }
+      }
+      const pct = j.live ? NaN : parseFloat(j.progress);    // live: barra de % não faz sentido
+      row.querySelector(".j-bar").style.display = isFinite(pct) ? "" : "none";
+      if (isFinite(pct)) row.querySelector(".j-bar i").style.width = Math.min(100, pct) + "%";
+      if (i === 0 && sum.parentNode !== row) row.appendChild(sum);
+      if (list.children[i] !== row) list.insertBefore(row, list.children[i] || null);                            // reanexa na ordem da fila
+      if (row._enter) row._enter = false;   // pinta o "debaixo" 1º, solta no mesmo tick — o card sobe animado
+    });
+
+    const noteEl = el.querySelector(".j-note");
+    const noteTxt = note ? note.text : null;
+    if ((el._noteTxt || null) !== noteTxt) {            // aviso mudou: remonta (o ✓ verde não repete a cada poll)
+      el._noteTxt = noteTxt;
+      if (note) showToastMessage(noteEl, note);
+      else noteEl.replaceChildren();
+    }
+    noteEl.className = "j-note" + (note ? " on" : "");
+    if (!wasOpen) void el.offsetWidth;
+    el.classList.add("is-open");
+    applyToastPos();
+  }
+
+  // um poller por aba: acompanha os jobs do navegador (não os envios Adobe nem os itens de listas)
+  let jobsPoll = 0, jobsMisses = 0, liveTick = 0, jobsPolling = false;
+  const pendingStop = new Set();               // ids com cancel clicado aguardando o servidor confirmar "stopping"
+  const finishingJobs = new Map();
+  function finishInCard(job, text) {
+    if (finishingJobs.has(job.id)) return;
+    const card = {...job, finalText:text};
+    finishingJobs.set(job.id, card);
+    pendingStop.delete(job.id);
+    setTimeout(() => {
+      if (finishingJobs.get(job.id) !== card) return;
+      card.retiring = true;
+      renderJobs();
+      const duration = parseFloat(getComputedStyle(state.toastEl).getPropertyValue("--stack-close")) || 250;
+      setTimeout(() => {
+        if (finishingJobs.get(job.id) !== card) return;
+        finishingJobs.delete(job.id);
+        state.jobs = state.jobs.filter(j => j.id !== job.id);
+        renderJobs();
+      }, duration);
+    }, job.warning || job.status === "error" ? 5000 : 1500);
+  }
+  const jobsGone = new Map();                  // id -> polls seguidos sem o job na lista (servidor reiniciou = zumbi)
+  function tickLive() {                        // repinta "gravando há Xs" a cada segundo enquanto houver live ativa
+    const on = (state.jobs || []).some((j) => j.live && j.status === "downloading");
+    if (on && !liveTick) liveTick = setInterval(() => { try { renderJobs(); } catch (_) {} }, 1000);
+    if (!on && liveTick) { clearInterval(liveTick); liveTick = 0; }
+  }
+  function ensurePoll() { if (!jobsPoll) jobsPoll = setInterval(pollJobs, 800); }
+  function trackJob(jobId, folder, done) {
+    state.trackedJobs.set(jobId, { folder, done });
+    ensurePoll();
+  }
+  async function pollJobs() {
+    if (jobsPolling) return;                   // servidor lento: não empilha uma requisição sobre a outra
+    jobsPolling = true;
+    try {
+      let r;
+      try { r = await sendMsg({ type: "JOBS" }); } catch (_) { r = null; }
+      if (r && r.stale) {                      // extensão recarregada: esta aba está morta — para tudo
+        clearInterval(jobsPoll); jobsPoll = 0;
+        state.trackedJobs.clear();
+        finishingJobs.clear();
+        state.jobs = [];
+        pendingStop.clear();
+        staleNotice();
+        return;
+      }
+      if (!r || !r.ok || !r.data) {
+        jobsMisses++;
+        if (jobsMisses === 3) {                // servidor caiu: avisa UMA vez e esconde a lista…
+          state.jobs = [];
+          finishingJobs.clear();
+          pendingStop.clear();
+          renderJobs();
+          toast(t("serverOffline"), "err");
+        }
+        return;                                // …mas nunca morre: servidor voltou, a pilula volta junto
+      }
+      jobsMisses = 0;
+      const jobs = Array.isArray(r.data.jobs) ? r.data.jobs : [];
+      for (const [id, tr] of state.trackedJobs) {
+        const j = jobs.find((x) => x.id === id);
+        if (!j) {
+          const gone = (jobsGone.get(id) || 0) + 1;   // servidor vivo mas o job sumiu = zumbi de reinício
+          if (gone >= 10) {
+            jobsGone.delete(id);
+            state.trackedJobs.delete(id);
+            try { tr.done && tr.done(); } catch (_) {}
+            toast(t("jobsLost"), "err", 6000);
+          } else jobsGone.set(id, gone);
+          continue;
+        }
+        jobsGone.delete(id);
+        const fin = (kind, text, ms) => { if (state.jobs.some(job => job.id === id)) finishInCard(j, text); else toast(text, kind, ms); state.trackedJobs.delete(id); try { tr.done && tr.done(); } catch (_) {} };
+        if (j.status === "done") fin("ok", t("savedInShort", folderName(tr.folder || j.output_dir || "")) + (j.warning ? " — " + t("ffWarn") : ""), j.warning ? 9000 : 6000);
+        else if (j.status === "canceled") fin(null, t("canceledMsg"), 3500);
+        else if (j.status === "error") fin("err", t("errShort", String(j.error || "-").slice(0, 90)), 7000);
+      }
+      for (const previous of state.jobs) {
+        if (finishingJobs.has(previous.id)) continue;
+        const latest = jobs.find(job => job.id === previous.id);
+        if (latest && ["done","canceled","error"].includes(latest.status)) finishInCard(latest, stageLine(latest));
+        else if (!latest && pendingStop.has(previous.id)) {
+          finishInCard({...previous,status:"canceled"}, t("canceledMsg"));
+          const tracked = state.trackedJobs.get(previous.id);
+          state.trackedJobs.delete(previous.id);
+          jobsGone.delete(previous.id);
+          try { tracked?.done?.(); } catch (_) {}
+        }
+      }
+      state.jobs = jobs.filter((j) => ACTIVE_J.has(j.status) && !finishingJobs.has(j.id) && !j.import_app && !j.batch)
+        .concat([...finishingJobs.values()])
+        .sort((a, b) => (b.created || 0) - (a.created || 0));
+      renderJobs();
+      if (!state.trackedJobs.size && !state.jobs.length) { clearInterval(jobsPoll); jobsPoll = 0; }
+    } finally {
+      jobsPolling = false;
+    }
   }
 
   // HLS/DASH mais "mestre" que o player pediu (a playlist principal, não a de uma única qualidade "...-video=1320960.m3u8")
@@ -1223,28 +2124,107 @@
     return master || hls[hls.length - 1];
   }
 
+  /* Nome do programa real exibido na página. Streams crus (.m3u8/.mpd) não têm metadados —
+     sem isso o arquivo sai com o título da aba ("Assistir X | Site"). Procura no documento
+     inteiro e pontua por proximidade do player: o título do programa fica colado nele.
+     Overlay de info que só monta no hover (Globoplay "Agora na TV"): simula o mouse sobre
+     o player antes de ler — os eventos sintéticos acordam o painel igual um mouse real. */
+  async function pageProgramTitle() {
+    try {
+      const v = state.video;
+      if (v && v.isConnected) {
+        try {
+          const rr = v.getBoundingClientRect();
+          const cx = rr.left + rr.width / 2, cy = rr.top + rr.height * 0.8;
+          // PointerEvent de verdade + composed: atravessa shadow DOM e carrega pointerType/id
+          for (const t of ["pointermove", "pointerover", "mousemove", "mouseover"]) {
+            const Ev = t.startsWith("pointer") ? PointerEvent : MouseEvent;
+            v.dispatchEvent(new Ev(t, { bubbles: true, composed: true, pointerId: 1, pointerType: "mouse", isPrimary: true, clientX: cx, clientY: cy }));
+          }
+          document.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, composed: true, clientX: cx, clientY: cy }));   // React delega no root
+          await new Promise((rs) => setTimeout(rs, 320));
+        } catch (_) {}
+      }
+      const vr = v && v.isConnected ? v.getBoundingClientRect() : null;
+      const skip = /^(programa[cç][aã]o|programming|grade|schedule|extras?|menu|in[ií]cio|home|assistir$|watch$|a seguir|up next|pr[oó]ximo|agora na tv|ao vivo|live now|no ar$|on air|an[uú]ncio|publicidade|propaganda|sponsored|patrocin|entrar$|sign in|assine|subscribe|ver tudo|see all|busca$|search$)/i;
+      // dados estruturados: sites de TV publicam o nome do programa em JSON-LD — mais confiável que adivinhar classes
+      for (const s of document.querySelectorAll("script[type='application/ld+json']")) {
+        try {
+          const d = JSON.parse(s.textContent || "");
+          const list = Array.isArray(d) ? d : [d].concat(d["@graph"] || []);
+          for (const it of list) {
+            const nm = it && String(it.name || "").trim();
+            if (nm.length > 4 && nm.length < 120 && !skip.test(nm) && /video|broadcast|movie|episode|program|event/i.test(it["@type"] || "")) return nm;
+          }
+        } catch (_) {}
+      }
+      let best = "", bestScore = 3, bestHidden = "";
+      document.querySelectorAll("h1,h2,h3,h4,[role='heading'],[class*='program' i],[class*='broadcast' i],[class*='now-playing' i],[class*='title' i],[data-testid*='title' i]").forEach((e) => {
+        const tx = (e.textContent || "").trim().replace(/\s+/g, " ");
+        if (tx.length < 5 || tx.length > 110 || skip.test(tx)) return;
+        if (e.closest && e.closest("[class*='advert' i],[class*='sponsor' i],[aria-hidden='true'],nav,footer,[role='navigation'],[role='banner']")) return;
+        const r = e.getBoundingClientRect();
+        const sem = !/^(H[1-4])$/.test(e.tagName);                  // nome semântico na classe: pode estar opacity:0 mas montado
+        if (!r.width || !r.height) {
+          if (sem && !bestHidden) bestHidden = tx;                  // montado mas invisível: último recurso antes da meta tag
+          return;
+        }
+        let s = e.tagName === "H1" ? 3 : e.tagName === "H2" ? 2 : sem ? 1.5 : 1;
+        if (vr && vr.width) {
+          const dy = Math.abs((r.top + r.bottom) / 2 - (vr.top + vr.bottom) / 2);
+          const horiz = r.left < vr.right && r.right > vr.left;
+          if (horiz && dy < vr.height) s += 5;                      // ao lado/abaixo do player = quase certeza
+          else s -= Math.min(3, dy / 400);
+        }
+        if (s > bestScore) { bestScore = s; best = tx; }
+      });
+      if (best) return best;
+      if (bestHidden) return bestHidden;
+      const og = document.querySelector('meta[property="og:title"], meta[name="twitter:title"], meta[itemprop="name"], meta[name="title"]');
+      if (og && og.content && og.content.trim()) return og.content.trim().slice(0, 120);
+    } catch (_) {}
+    return "";
+  }
+
   async function startOne(quality, sendTo, chooseAudio) {
-    if (state.busy) return;
-    state.busy = true;
     const cfg = state.cfg || {};
     const page = location.href;
-    const direct = (state.video && (state.video.currentSrc || state.video.src)) || "";
+    const direct = isLI() ? liMedia(state.video) : (state.video && (state.video.currentSrc || state.video.src)) || "";
     let vids = 1;
     try { vids = document.querySelectorAll("video").length || 1; } catch (_) {}
 
     let primary = page;
     let fallback = "";
     const manyVideos = vids > 1;
-    const igUrl = state.video ? (isIG() ? igPostUrl(state.video) : isTT() ? ttPostUrl(state.video) : isX() ? xTweetUrl(state.video) : isFB() ? fbVideoUrl(state.video) : isPin() ? pinFeedUrl(state.video) : "") : "";
+    // YouTube fora do /watch: o vídeo é o do CARD apontado; sem ele, a home do site seria baixada (vídeo qualquer)
+    // âncora = o elemento VIVO mais recente: um state.video velho desanexado apontaria pro card errado
+    const anchor = (state.cardEl && state.cardEl.isConnected) ? state.cardEl
+                 : (state.video && state.video.isConnected) ? state.video : null;
+    const cardInfo = isYT() && (state.cardEl || !ytId()) ? ytCardInfo(anchor) : null;   // /watch: resolve o card apontado na lateral; sem card, vale a página
+    const isGlobo = /(^|\.)globo\.com$/.test(location.hostname);
+    const cardLive = isGlobo && !!state.video && cardIsLive(state.video);   // selo AO VIVO dentro do card do vídeo
+    let globoLive = false;                            // globoplay fora de /v/id: a transmissão é live por definição
+    const igUrl = state.video ? (isLI() ? liPostUrl(state.video) : isIG() ? igPostUrl(state.video) : isTT() ? ttPostUrl(state.video) : isX() ? xTweetUrl(state.video) : isFB() ? fbVideoUrl(state.video) : isPin() ? pinFeedUrl(state.video) : "") : "";
     if (igUrl) {
       primary = igUrl;
-      if (isTT() && /^https?:/i.test(direct)) fallback = direct;
+      if ((isTT() || isLI()) && /^https?:/i.test(direct)) fallback = direct;
+    }
+    else if (cardInfo) {
+      primary = cardInfo.url;
     }
     else if (direct && /^https?:/i.test(direct) && !isYT()) {
-      if (manyVideos) { primary = direct; fallback = page; }
+      if (manyVideos || isGlobo) { primary = direct; fallback = page; }   // na Globo o stream do elemento É o vídeo do card
       else { fallback = direct; }
     }
-    const holder = !igUrl && state.video && state.video.closest ? state.video.closest("[data-video-id]") : null;
+    if (isLI() && !igUrl) {
+      if (!direct) {
+        toast(/^pt/i.test(navigator.language) ? "LinkedIn: dê play neste vídeo por alguns segundos e tente novamente. Ainda não consegui identificar a mídia deste post." : "LinkedIn: play this video for a few seconds, then try again. This post's media is not available yet.", "err", 7000);
+        return;
+      }
+      primary = direct;
+      fallback = "";
+    }
+    const holder = !isLI() && !igUrl && state.video && state.video.closest ? state.video.closest("[data-video-id]") : null;
     const hid = holder ? holder.getAttribute("data-video-id") : "";
     if (!igUrl && hid && /^\d{7,}$/.test(hid)) {
       primary = `https://globoplay.globo.com/v/${hid}/`;      // o vídeo que o usuário apontou, não o 1º da página
@@ -1253,66 +2233,93 @@
       // id curto (6 dígitos) = AO VIVO: nem a URL do globoplay nem a da matéria servem; vale o HLS que o player pediu
       const live = liveStream();
       if (live) { primary = live; fallback = page; }
-    } else if (primary === page && !igUrl) {
-      const alt = resolveBestPageOrVideoUrl(state.video);
-      if (alt && alt !== page) fallback = alt;
+    } else if (!igUrl && cardLive) {
+      // card AO VIVO sem data-video-id: o mestre HLS pedido pelo player é a transmissão; a matéria só tem clipes
+      const live = liveStream() || (/^https?:/i.test(direct) ? direct : "");
+      if (live) { primary = live; fallback = page; }
+    } else if (!igUrl && isGlobo && state.video) {
+      // Globoplay fora de /v/id ("Agora na TV", canais ao vivo): a página cairia na guarda
+      // de feed, mas a transmissão é o HLS mestre que o player pediu. Em g1/ge só vale
+      // com o vídeo live de verdade (duração infinita — pausado também conta).
+      const globoPlay = /globoplay\./i.test(location.hostname);
+      const liveVid = state.video.isConnected && state.video.duration === Infinity;
+      const live = liveStream() || (/^https?:/i.test(direct) ? direct : "");
+      if (live && (liveVid || globoPlay)) { primary = live; fallback = page; globoLive = true; }
+      else if (globoPlay) {
+        toast(/^pt/i.test(navigator.language) ? "Dê play na transmissão por alguns segundos e tente de novo — ainda não identifiquei o canal ao vivo." : "Press play on the broadcast for a few seconds and try again — I couldn't identify the live channel yet.", "err", 7000);
+        return;
+      }
+    }
+    if (primary === page && !igUrl) {
+      const gen = !isYT() ? genericCardUrl(state.video) : "";         // feeds de outros sites: o link do card vence a página
+      if (gen && gen !== page) { primary = gen; fallback = ""; }
+      else {
+        const alt = resolveBestPageOrVideoUrl(state.video);
+        if (alt && alt !== page) fallback = alt;
+      }
     }
 
     if (isTT() && !igUrl && !/^https?:/i.test(direct)) {
-      state.busy = false;
       toast(/^pt/i.test(navigator.language) ? "TikTok: não consegui identificar este vídeo. Abra o vídeo pelo título ou pelo botão Compartilhar e tente de novo." : "TikTok: could not identify this video. Open it using its title or Share button and try again.", "err", 7000);
       return;
     }
     if (isIG() && !igUrl && !/^https:\/\/www\.instagram\.com\/(p|reel|reels|tv|stories)\//.test(primary)) {
-      state.busy = false;
       toast(/^pt/i.test(navigator.language) ? "Instagram: não achei o link deste post. Clique na data do post (abre o post) e baixe de lá." : "Instagram: could not find this post's link. Click the post date to open it, then download from there.", "err", 7000);
       return;
     }
     if (isPin() && !igUrl) {                 // ainda procurando o stream (ele chega em instantes): tenta de novo antes de avisar
       await new Promise((x) => setTimeout(x, 1800));
       const again = state.video ? pinFeedUrl(state.video) : "";
-      if (again) { state.busy = false; return startOne(quality); }
-      state.busy = false;
+      if (again) { return startOne(quality, sendTo, chooseAudio); }   // retry não pode perder o destino/áudio
       toast(/^pt/i.test(navigator.language) ? "Pinterest: não achei o link deste pin. Abra o pin (clique nele) e baixe de lá." : "Pinterest: could not find this pin's link. Open the pin (click it) and download from there.", "err", 7000);
       return;
     }
     if (isFB() && !igUrl && !fbCandidate(primary)) {
-      state.busy = false;
       toast(/^pt/i.test(navigator.language) ? "Facebook: não achei o link deste vídeo. Abra o vídeo (clique nele ou na data do post) e baixe de lá." : "Facebook: could not find this video's link. Open the video (click it or the post date) and download from there.", "err", 7000);
       return;
     }
     if (isX() && !igUrl && !X_STATUS_RE.test(new URL(primary, location.href).pathname)) {
-      state.busy = false;
       toast(/^pt/i.test(navigator.language) ? "X: não achei o link deste tweet. Clique na data do tweet (abre o tweet) e baixe de lá." : "X: could not find this tweet's link. Click the tweet date to open it, then download from there.", "err", 7000);
       return;
     }
 
+    // Última guarda: feed/listagem de site conhecido não identifica UM vídeo — recusar em vez de baixar um vídeo qualquer.
+    if (isGenericFeedUrl(primary)) {
+      toast(t("feedNotVideo"), "err", 8000);
+      return;
+    }
+
     if (chooseAudio || quality === "audio") {
-      state.busy = false;
-      await sendMsg({type:"OPEN_COLLECTION",seed:{media:"audio",items:[{url:primary,fallbackStream:fallback,referer:page,title:document.title}]}});
+      await sendMsg({type:"OPEN_COLLECTION",seed:{media:"audio",items:[{url:primary,fallbackStream:fallback,referer:page,title:(cardInfo && cardInfo.title) || document.title,linkedinManifest:isLI()?liManifest(state.video):undefined}]}});
       return;
     }
     toast(t("starting"));
 
+    const streamTitle = /\.(m3u8|mpd)(\?|#|$)/i.test(primary) ? await pageProgramTitle() : "";   // stream cru: o programa real, não o título da aba
     const res = await sendMsg({
       type: "DOWNLOAD",
       url: primary,
       fallbackStream: fallback,
       referer: (window !== window.top && /^https?:/i.test(document.referrer || "")) ? document.referrer : page,
-      title: igUrl && isIG() ? igTitle(state.video) : igUrl && isX() ? xTitle(state.video) : igUrl && isFB() ? fbTitle(state.video) : igUrl && isPin() ? pinTitle(igUrl, t("pinVideo")) : document.title,
+      title: streamTitle || (igUrl && isIG() ? igTitle(state.video) : igUrl && isX() ? xTitle(state.video) : igUrl && isFB() ? fbTitle(state.video) : igUrl && isPin() ? pinTitle(igUrl, t("pinVideo")) : (cardInfo && cardInfo.title) || document.title),
       pageUrl: page,
       quality: quality || "best",
-      target: sendTo || ""
+      target: sendTo || "",
+      // live = sinal do MESMO alvo da URL: card clicado → selo/player daquele card; vídeo da página → selo do player.
+      // pageIsLive() varre o documento: num feed com qualquer card AO VIVO, marcaria até download de VOD — não pode valer aqui.
+      live: !!(globoLive || (state.video && state.video.isConnected && state.video.duration === Infinity) || (cardInfo && cardInfo.live)
+               || (cardLive && /\.(m3u8|mpd)(\?|#|$)/i.test(primary))
+               || (!cardInfo && !igUrl && primary === page && pageIsLive())),
+      linkedinManifest: isLI() ? liManifest(state.video) : undefined
     });
 
     if (!res || !res.ok || !res.job_id) {
-      state.busy = false;
       toast(failText(res), "err", sendTo ? 9000 : 6500);
       return;
     }
     if (res.duplicate) toast(t("dupNote"), "ok");
     else if (sendTo) toast(t("sentProject", folderName(res.output_dir || "")), "ok", 6000);
-    trackJob(res.job_id, res.output_dir || cfg.output_dir, () => { state.busy = false; });
+    trackJob(res.job_id, res.output_dir || cfg.output_dir);
   }
 
   // texto de erro conforme a causa (servidor recusou a extensão x offline x outro erro)
@@ -1326,7 +2333,7 @@
     const { items } = scan();
     const urls = items.map((i) => i.url).slice(0, 20);
     const playerPage = isYT() || /vimeo\.com|globoplay|globo\.com|dailymotion|twitch/.test(location.hostname);
-    if (playerPage) urls.unshift(location.href);
+    if (playerPage && !isGenericFeedUrl(location.href)) urls.unshift(location.href);
     else if (!urls.length) urls.push(location.href);
 
     const res = await sendMsg({
@@ -1342,52 +2349,13 @@
       return;
     }
     const n = res.queued || 0;
-    if (!n) { toast(t("nothingHere"), "err"); return; }
-    toast(t("queuedNote", n), "ok", 5200);
+    const failed = res.failed || 0;
+    if (!n) { toast(failed ? t("queueFail") : t("nothingHere"), "err"); return; }
+    ensurePoll();                                   // a pilula acompanha o lote como acompanha download único
+    toast(t("queuedNote", n) + (failed ? " — " + t("queuedFail", failed) : ""), "ok", 5200);
   }
 
-  // OBS: o temporizador NÃO pode se chamar "t" (escondia a função de tradução e travava tudo)
-  function trackJob(jobId, folder, done) {
-    let last = "";
-    let misses = 0;
-    const started = Date.now();
-    let ended = false;
-    const timer = setInterval(async () => {
-      const finish = () => {
-        if (ended) return;
-        ended = true;
-        clearInterval(timer);
-        try { done && done(); } catch (_) {}
-      };
-      try {
-        const st = await sendMsg({ type: "STATUS", jobId });
-        if (!st || !st.ok) {
-          if (++misses >= 3) { toast(t("serverOffline"), "err"); finish(); }
-          return;
-        }
-        misses = 0;
-        const d = st.data || {};
-        if (d.status === "queued") toast(t("queuedWait"));
-        else if (d.status === "downloading") {
-          const txt = d.progress ? t("downloadingP", d.progress + (d.speed ? " • " + d.speed : "")) : t("downloading0");
-          if (txt !== last) { last = txt; toast(txt, null, 0); }
-        } else if (d.status === "merging") toast(t("mergingShort"), null, 0);
-        else if (d.status === "done") {
-          toast(t("savedInShort", folderName(folder || (d.output_dir || ""))) + (d.warning ? " — " + t("ffWarn") : ""), "ok", d.warning ? 9000 : 6000);
-          finish();
-        } else if (d.status === "canceled") {
-          toast(t("canceledMsg"), null, 3500);
-          finish();
-        } else if (d.status === "error") {
-          toast(t("errShort", String(d.error || "-").slice(0, 90)), "err", 7000);
-          finish();
-        }
-      } catch (_) {
-        finish();                                    // qualquer falha: nunca deixa o botão "ocupado" para sempre
-      }
-      if (Date.now() - started > 3 * 3600 * 1000) finish();
-    }, 800);
-  }
+  /* ------------------------------------------------------ botão no YouTube -- */
 
   /* ------------------------------------------------------ botão no YouTube -- */
   const YT_BTN_ID = "noevfx-dl-wrap";
@@ -1470,7 +2438,8 @@
       referer: location.href,
       title: document.title,
       pageUrl: location.href,
-      quality: quality || "best"
+      quality: quality || "best",
+      live: pageIsLive()
     });
 
     if (!res || !res.ok || !res.job_id) {
@@ -1479,10 +2448,12 @@
       return;
     }
     toast(res.duplicate ? t("dupNote") : t("downloadStarted"), "ok");
+    trackJob(res.job_id, res.output_dir || "");           // pilula: o job entra na lista (com cancelar)
     // OBS: o temporizador NÃO pode se chamar "t" (escondia a função de tradução)
     let misses = 0;
     const started = Date.now();
     const timer = setInterval(async () => {
+      if (!btn.isConnected) { clearInterval(timer); return; }   // SPA trocou de página: para de perguntar pra sempre
       const reset = (ms) => setTimeout(() => { label.textContent = t("ytDownload"); btn.disabled = false; }, ms);
       try {
         const st = await sendMsg({ type: "STATUS", jobId: res.job_id });
@@ -1537,6 +2508,8 @@
   let lastHref = baseUrl();
   function onPageChange() {
     lastHref = baseUrl();
+    state.video = null;
+    state.cardEl = null;                         // SPA trocou de página: as âncoras antigas morreram junto
     state.sent.clear();
     state.thumb = "";
     netList.length = 0;
@@ -1548,10 +2521,16 @@
   const onReady = () => {
     startObserver();
     const navTimer = setInterval(() => {
-      if (!chrome.runtime || !chrome.runtime.id) { clearInterval(navTimer); staleNotice(); return; }
+      if (!chrome.runtime || !chrome.runtime.id) { clearInterval(navTimer); obs.disconnect(); staleNotice(); return; }
       if (baseUrl() !== lastHref) onPageChange();
     }, 300);
     loadPos();
+    loadToastPos();
+    sendMsg({ type: "JOBS" }).then((r) => {             // página recarregou com download ativo: retoma a pilula sozinha
+      const js = r && r.data && Array.isArray(r.data.jobs) ? r.data.jobs : [];
+      if (js.some((j) => ACTIVE_J.has(j.status) && !j.import_app && !j.batch)) ensurePoll();
+      if (js.length) pollJobs();
+    });
     loadCfg().then(() => {
       publish(true);
       injectYouTubeButton();
@@ -1576,6 +2555,10 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
     if (!msg) return;
+    if (msg.type === "IS_LIVE") {
+      respond({ ok: true, live: pageIsLive() });
+      return;
+    }
     if (msg.type === "RESCAN") {
       const { items, thumb } = scan();
       state.thumb = thumb || state.thumb;

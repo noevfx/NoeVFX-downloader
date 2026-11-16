@@ -123,7 +123,10 @@ def build_edition(edition: str, version: str) -> Path:
                 zi.create_system = 3
                 zi.external_attr = (0o755 if f.endswith((".sh", ".command")) else 0o644) << 16
                 zi.compress_type = zipfile.ZIP_DEFLATED
-                z.writestr(zi, full.read_bytes())
+                data = full.read_bytes()
+                if full.suffix.lower() in {".js", ".json", ".html", ".css", ".py", ".md", ".txt", ".xml", ".jsx", ".svg", ".sh", ".command", ".ps1", ".bat"}:
+                    data = crlf(data) if full.suffix.lower() in {".bat", ".ps1"} else data.replace(b"\r\n", b"\n")
+                z.writestr(zi, data)
                 count += 1
     with zipfile.ZipFile(zip_path) as z:
         assert z.testzip() is None
@@ -133,8 +136,9 @@ def build_edition(edition: str, version: str) -> Path:
 
 def main():
     global WORK
-    # a versão vem do manifest da extensão (fonte única) e entra no NOME dos zips e num VERSION.txt dentro deles
-    version = json.loads((ROOT / "browser" / "manifest.json").read_text(encoding="utf-8"))["version"]
+    version = (ROOT / "version.txt").read_text(encoding="utf-8").strip()
+    if json.loads((ROOT / "browser/manifest.json").read_text(encoding="utf-8"))["version"] != version:
+        raise RuntimeError("version.txt e manifest precisam ter a mesma versão")
     WORK = WORK / version / datetime.now(timezone.utc).strftime("compilacao-%Y%m%dT%H%M%S%fZ")
     WORK.mkdir(parents=True)
     DIST.mkdir(parents=True, exist_ok=True)

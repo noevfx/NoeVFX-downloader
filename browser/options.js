@@ -391,6 +391,13 @@ function copyText(txt, btn) {
   if (cm) cm.addEventListener("click", () => copyText("labs@noevfx.com", cm));
 })();
 
+// toggle (transitions.dev): o bounce do polegar só toca depois do primeiro gesto real —
+// sem is-init, todo switch "off" animaria de volta no carregamento da página
+document.addEventListener("change", (e) => {
+  const tg = e.target && e.target.closest ? e.target.closest(".toggle") : null;
+  if (tg) tg.classList.add("is-init");
+});
+
 (async function init() {
   await health();
   await loadConfig();

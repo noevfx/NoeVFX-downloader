@@ -29,13 +29,18 @@
       --ok: #059669;
       --err: #dc2626;
     }
+    :root {
+      /* transitions.dev "toggle" motion tokens — um lugar só pra afinar */
+      --toggle-dur: 350ms; --toggle-travel: 20px; --toggle-ov1: 1px; --toggle-ov2: 0px;
+      --toggle-track: 150ms; --toggle-ease: cubic-bezier(.34,1.35,.64,1);
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0; padding: 0 0 96px;
       background: var(--bg); color: var(--text);
       font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
       font-size: 14px; line-height: 1.5;
-      transition: background .15s ease, color .15s ease;
+      transition: background var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out), color var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out);
     }
     .wrap { max-width: 760px; margin: 0 auto; padding: 28px 20px 0; }
     header.top { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
@@ -53,7 +58,7 @@
     .icon-btn {
       width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border);
       background: var(--card); color: var(--text); cursor: pointer;
-      display: inline-flex; align-items: center; justify-content: center;
+      display: inline-flex; align-items: center; justify-content: center; transition: border-color var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out);
     }
     .icon-btn:hover { border-color: var(--accent); }
 
@@ -91,7 +96,7 @@
     .btn {
       padding: 10px 16px; border-radius: 9px; border: 1px solid var(--border);
       background: var(--card-2); color: var(--text); font-size: 13px; font-weight: 600;
-      cursor: pointer; white-space: nowrap; font-family: inherit;
+      cursor: pointer; white-space: nowrap; font-family: inherit; transition: border-color var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out), background var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out);
     }
     .btn:hover { border-color: var(--accent); background: var(--card); }
     .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -118,14 +123,35 @@
     .toggle input { opacity: 0; width: 0; height: 0; }
     .toggle span {
       position: absolute; inset: 0; border-radius: 99px; background: var(--border);
-      cursor: pointer; transition: background .15s ease;
+      cursor: pointer;
     }
+    .toggle.is-init span { transition: background var(--toggle-track) ease; }   /* sem is-init o track não "acende" no load da página */
     .toggle span::after {
       content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
-      border-radius: 50%; background: #fff; transition: transform .15s ease;
+      border-radius: 50%; background: #fff; translate: 0 0; will-change: translate;
     }
     .toggle input:checked + span { background: var(--accent); }
-    .toggle input:checked + span::after { transform: translateX(20px); }
+    .toggle input:checked + span::after { translate: var(--toggle-travel) 0; }
+    .toggle input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* transitions.dev "toggle": polegar viaja com overshoot duplo (passa, volta, assenta).
+       .is-init evita o keyframe de "off" tocando no carregamento da página. */
+    .toggle.is-init input:checked + span::after { animation: t-tgl-on var(--toggle-dur) var(--toggle-ease) both; }
+    .toggle.is-init input:not(:checked) + span::after { animation: t-tgl-off var(--toggle-dur) var(--toggle-ease) both; }
+    @keyframes t-tgl-on {
+      0% { translate: 0 0; }
+      55% { translate: calc(var(--toggle-travel) + var(--toggle-ov1)) 0; }
+      80% { translate: calc(var(--toggle-travel) - var(--toggle-ov2)) 0; }
+      100% { translate: var(--toggle-travel) 0; }
+    }
+    @keyframes t-tgl-off {
+      0% { translate: var(--toggle-travel) 0; }
+      55% { translate: calc(0px - var(--toggle-ov1)) 0; }
+      80% { translate: var(--toggle-ov2) 0; }
+      100% { translate: 0 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .toggle span::after { animation: none !important; }
+    }
 
     .checks { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
     .check {
@@ -164,7 +190,7 @@
     .about-links a {
       display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border-radius: 9px;
       border: 1px solid var(--border); background: var(--card-2); color: var(--text);
-      text-decoration: none; font-size: 12px; font-weight: 600;
+      text-decoration: none; font-size: 12px; font-weight: 600; transition: border-color var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out), background var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out);
     }
     .about-links a:hover { border-color: var(--accent); background: var(--card); }
     .pix {
@@ -182,7 +208,7 @@
       display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border-radius: 8px;
       border: 1px solid var(--border); background: var(--card); color: var(--text);
       font-size: 11px; font-weight: 700; cursor: pointer; font-family: inherit; text-decoration: none;
-      white-space: nowrap;
+      white-space: nowrap; transition: border-color var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out);
     }
     .mini:hover { border-color: var(--accent); }
     .mini.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -332,7 +358,7 @@
         </svg>
         <div style="flex:1;min-width:0">
           <div style="font-weight:800;font-size:15px">
-            Noe VFX Downloader <span class="about-badge" id="aboutVer">v3.2.1</span>
+            Noe VFX Downloader <span class="about-badge" id="aboutVer">v3.2.2</span>
           </div>
           <div class="tiny" data-i18n="aboutTagline"></div>
           <p class="hint" style="margin:8px 0 0" data-i18n="aboutDesc"></p>

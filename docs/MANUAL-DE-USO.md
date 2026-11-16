@@ -1,6 +1,6 @@
 # Do vídeo ao seu projeto
 
-**Manual 3.2.0** · [Versão ilustrada e interativa](https://noevfx.github.io/NoeVFX-downloader/) · [Downloads](https://github.com/noevfx/NoeVFX-downloader/releases)
+**Manual 3.2.2** · [Versão ilustrada e interativa](https://noevfx.github.io/NoeVFX-downloader/) · [Downloads publicados](https://github.com/noevfx/NoeVFX-downloader/releases)
 
 Encontre referências no navegador e envie ao Premiere ou After Effects. Recebeu links do cliente? Cole no painel e continue editando. Uma playlist de músicas também pode virar uma seleção de áudios.
 
@@ -18,9 +18,31 @@ A extensão é para **Chromium**: Chrome, Edge, Brave, Opera, Vivaldi e compatí
 
 [Instalação com telas e etapas Adobe →](https://noevfx.github.io/NoeVFX-downloader/instalar.html)
 
+## Três tarefas ao mesmo tempo
+
+Grave **até três lives simultâneas** ou combine lives e vídeos comuns. O limite é de **três tarefas ativas no total**: por exemplo, duas lives e um vídeo baixando. Os próximos itens aguardam na fila e começam quando uma vaga é liberada. Uma live ocupa sua vaga até terminar ou você escolher **Parar e salvar**.
+
+No feed do YouTube, passe o mouse na miniatura e use o botão do Downloader. Quando o card já fornece o endereço da transmissão, é possível iniciar a gravação sem abrir a página do vídeo ou reproduzi-lo. Em outros sites, e quando a fonte ainda não foi identificada, pode ser necessário dar play por alguns segundos. A gravação depende do acesso à transmissão e da disponibilidade da fonte.
+
+A pílula azul acompanha o download. Clique na seta para abrir os cards acima dela; clique novamente para recolher. Cada card mostra título, etapa e progresso. **Parar e salvar** encerra a captura da live e prepara o arquivo. O **X** cancela o vídeo ou item em espera. A confirmação fica no próprio card, que sai com animação enquanto a pilha se reorganiza.
+
+### Três lives simultâneas
+
+![Três lives em gravação, com Parar e salvar por card](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/site/assets/tres-lives-3.2.2.png)
+
+### Cinco itens: três baixando e dois aguardando
+
+![Fila com três vídeos baixando e dois aguardando](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/site/assets/fila-cinco-3.2.2.png)
+
+### Duas lives, um vídeo e mais um na fila
+
+![Fila mista com duas lives, um vídeo baixando e um aguardando](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/site/assets/fila-mista-3.2.2.png)
+
+*Capturas da interface 3.2.2 com dados de exemplo. A fila continua no aplicativo local; feche uma gravação com Parar e salvar antes de desligar o computador.*
+
 ## 2. Vi uma referência no navegador
 
-![Player web com botão, dropdown de qualidade e destinos Adobe](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/video-envio-3.2.0.png)
+![Player web com botão, dropdown de qualidade e destinos Adobe](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/video-envio-3.2.2.png)
 
 1. Passe o mouse sobre o vídeo e abra o **botão azul** do Downloader. Ele pertence à extensão, não ao site.
 2. Escolha **Nativa**, **1080p** ou **720p** no dropdown.
@@ -31,11 +53,13 @@ O envio Adobe usa a qualidade escolhida nesse menu. O projeto precisa estar salv
 
 **No feed do TikTok:** deixe o vídeo desejado tocar e use o botão azul sobre ele. Não precisa abrir nem copiar um link individual: a extensão identifica o vídeo no próprio player.
 
+**No feed do LinkedIn (3.2.2):** dê play no vídeo e use o botão azul sobre esse player. A extensão lê a fonte do próprio vídeo, inclusive quando o endereço está oculto atrás de um player `blob:` ou de uma lista de segmentos; você não precisa copiar o link. Pela barra do navegador, se houver mais de um vídeo possível, escolha na lista ou use o botão sobre o vídeo desejado. Colar apenas `linkedin.com/feed/` não identifica qual vídeo baixar. Posts indisponíveis ou sem acesso pela sua sessão podem impedir o download.
+
 [Experimente o menu sobre o vídeo →](https://noevfx.github.io/NoeVFX-downloader/navegador.html#player)
 
 ## 3. Prefiro o popup da extensão
 
-![Popup atual com qualidade, áudio, playlist e destinos Adobe](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/popup-editors-3.2.0.png)
+![Popup atual com qualidade, áudio, playlist e destinos Adobe](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/popup-editors-3.2.2.png)
 
 Abra o ícone na barra do navegador. Use o endereço atual ou cole outro. O dropdown define a qualidade do download rápido e do envio ao Adobe.
 
@@ -82,7 +106,7 @@ Use **Modo completo** para ver todos os detalhes. **Modo compacto** recolhe de n
 
 ![Painel Adobe no modo compacto](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/painel-adobe-compacto-3.2.1.png)
 
-![Painel Adobe atual com seleção e importação](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/painel-adobe-3.2.1.png)
+![Painel Adobe atual com seleção e importação](https://raw.githubusercontent.com/noevfx/NoeVFX-downloader/main/docs/img/painel-adobe-3.2.2.png)
 
 1. Abra **Janela → Extensões → Noe VFX Downloader for Editors**; o caminho pode variar conforme a versão do editor.
 2. Confira o projeto reconhecido no topo e cole os links ou a playlist.

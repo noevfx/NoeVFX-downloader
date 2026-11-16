@@ -141,4 +141,6 @@ jobs:
         shell: bash
         env:
           BROWSER: ${{ steps.chrome.outputs.chrome-path }}
-        run: node tests/e2e.js
+        run: |
+          node tests/linkedin.js
+          node tests/e2e.js
